@@ -1,0 +1,41 @@
+.TH WC 1 "March, 2026"
+
+.SH NAME
+\fBwc\fP \- print word counts
+
+.SH SYNOPSIS
+\fBwc\fP [\fB\-c\fP] [\fB\-m\fP] [\fB\-l\fP] [\fB\-w\fP] [\fIfile\fP]...
+
+.SH DESCRIPTION
+Count the number of lines, words, and bytes in \fIfile\fPs.
+The counts for each \fIfile\fP will be printed and, if more than one \fIfile\fP is
+provided, a total will also be printed.
+
+.TP
+.B \-c
+Count bytes rather than characters.
+This is the default.
+
+.TP
+.B \-m
+Count characters rather than bytes.
+This will decode each input as UTF\-8 and count the codepoints.
+
+.TP
+.B \-l
+Count the number of lines.
+A line must be terminated with a line feed character to be counted;
+a file with no line feed characters will report zero lines.
+
+.TP
+.B \-w
+Count the words.
+A "word" is a sequence of non-whitespace characters.
+
+.PP
+If no options are given, the default is to print the lines, words, and bytes.
+.PP
+The \-c and \-m options are mutually exclusive.
+
+.SH STANDARDS
+POSIX.1-2024

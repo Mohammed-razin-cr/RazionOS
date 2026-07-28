@@ -1,0 +1,25 @@
+.TH SNOW 6 "April, 2026"
+
+.SH NAME
+\fBsnow\fP \- display falling snowflakes
+
+.SH SYNOPSIS
+\fBsnow\fP [\fB\-\-no\-ad\fP]
+
+.SH DESCRIPTION
+Displays a full screen, semi\-transparent window with animated falling snowflakes.
+.PP
+Pressing \fBq\fP while the window is focused will close the application.
+
+.SS Options
+.TP
+.B \-\-no\-ad
+Do not advertise the window to the panel.
+
+.TP
+.B \-\-sprite \fIpath\fP
+Use \fIpath\fP as the snowflake texture.
+The default is \fB/usr/share/icons/snowflake.png\fP.
+
+.SH SEE ALSO
+.BR compositor (1)

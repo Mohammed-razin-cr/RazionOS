@@ -1,0 +1,601 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <libc/syscall.h>
+#include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/mman.h>
+
+#include <libc/internal.h>
+#include <libc/stdio/stdio_internal.h>
+
+_hidden FILE __stdin = {
+	.fd = 0,
+	.read_buf = NULL,
+	.available = 0,
+	.offset = 0,
+	.read_from = 0,
+	.ungetc = -1,
+	.last_read_start = 0,
+	.bufsiz = BUFSIZ,
+
+	.wbufsiz = BUFSIZ,
+	.write_buf = NULL,
+	.written = 0,
+	.flags = 0,
+};
+
+_hidden FILE __stdout = {
+	.fd = 1,
+	.read_buf = NULL,
+	.available = 0,
+	.offset = 0,
+	.read_from = 0,
+	.ungetc = -1,
+	.last_read_start = 0,
+	.bufsiz = BUFSIZ,
+
+	.wbufsiz = BUFSIZ,
+	.write_buf = NULL,
+	.written = 0,
+	.flags = 0,
+};
+
+_hidden FILE __stderr = {
+	.fd = 2,
+	.read_buf = NULL,
+	.available = 0,
+	.offset = 0,
+	.read_from = 0,
+	.ungetc = -1,
+	.last_read_start = 0,
+	.bufsiz = BUFSIZ,
+
+	.wbufsiz = BUFSIZ,
+	.write_buf = NULL,
+	.written = 0,
+	.flags = 0,
+};
+
+FILE * stdin  = &__stdin;
+FILE * stdout = &__stdout;
+FILE * stderr = &__stderr;
+
+static FILE * _head = NULL;
+
+_hidden void __stdio_init_buffers(void) {
+	__stdin.read_buf   = mmap(NULL, BUFSIZ, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	__stdout.write_buf = mmap(NULL, BUFSIZ, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	__stderr.write_buf = mmap(NULL, BUFSIZ, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	__stdin._name = strdup("stdin");
+	__stdout._name = strdup("stdout");
+	__stderr._name = strdup("stderr");
+}
+
+_hidden void __stdio_cleanup(void) {
+	if (stdout) fflush(stdout);
+	if (stderr) fflush(stderr);
+	while (_head) {
+		fclose(_head);
+	}
+}
+
+#if 0
+static char * stream_id(FILE * stream) {
+	static char out[] = "stream\0\0\0\0\0\0";
+	if (stream == &__stdin) return "stdin";
+	if (stream == &__stdout) return "stdout";
+	if (stream == &__stderr) return "stderr";
+	sprintf(out, "stream %d", fileno(stream));
+	return out;
+}
+#endif
+
+extern int __libc_debug;
+extern char ** __argv;
+
+int setvbuf(FILE * stream, char * buf, int mode, size_t size) {
+	if (mode != _IOLBF) {
+		return -1; /* Unsupported */
+	}
+	if (buf) {
+		if (stream->read_buf) {
+			if (stream->bufflags & STDIO_BUF_READ_FREE) {
+				free(stream->read_buf);
+			} else {
+				munmap(stream->read_buf, BUFSIZ);
+			}
+		}
+		stream->bufflags |= STDIO_BUF_READ_FREE;
+		stream->read_buf = buf;
+		stream->bufsiz = size;
+	}
+	return 0;
+}
+
+int fflush(FILE * stream) {
+	if (!stream->write_buf) return EOF;
+	if (stream->written) {
+		ssize_t written = syscall_write(stream->fd, stream->write_buf, stream->written);
+		if (written < 0) {
+			stream->flags |= STDIO_ERROR;
+			return EOF;
+		}
+		stream->written = 0;
+	}
+	return 0;
+}
+
+static size_t write_bytes(FILE * f, char * buf, size_t len) {
+	if (!f->write_buf) return 0;
+
+	size_t newBytes = 0;
+	while (len > 0) {
+		f->write_buf[f->written++] = *buf;
+		if (f->written == (size_t)f->wbufsiz || *buf == '\n') {
+			if (fflush(f) == EOF) return newBytes;
+		}
+		newBytes++;
+		buf++;
+		len--;
+	}
+
+	return newBytes;
+}
+
+static size_t read_bytes(FILE * f, char * out, size_t len) {
+	size_t r_out = 0;
+
+	//fprintf(stderr, "%s: Read %d bytes from %s\n", __argv[0], len, stream_id(f));
+	//fprintf(stderr, "%s: off[%d] avail[%d] read[%d]\n", __argv[0], f->offset, f->available, f->read_from);
+
+	while (len > 0) {
+		if (f->ungetc >= 0) {
+			*out = f->ungetc;
+			len--;
+			out++;
+			r_out++;
+			f->ungetc = -1;
+			continue;
+		}
+
+		if (f->available == 0) {
+			if (f->offset == f->bufsiz) {
+				f->offset = 0;
+			}
+			if (!(f->flags & STDIO_UNSEEKABLE)) {
+				f->last_read_start = syscall_seek(f->fd, 0, SEEK_CUR);
+				if (f->last_read_start == -ESPIPE) {
+					f->last_read_start = -1;
+					f->flags |= STDIO_UNSEEKABLE;
+				}
+			}
+			ssize_t r = read(fileno(f), &f->read_buf[f->offset], f->bufsiz - f->offset);
+			if (r < 0) {
+				//fprintf(stderr, "error condition\n");
+				f->flags |= STDIO_ERROR;
+				return r_out;
+			} else {
+				f->read_from = f->offset;
+				f->available = r;
+				f->offset += f->available;
+			}
+		}
+
+		if (f->available == 0) {
+			/* EOF condition */
+			//fprintf(stderr, "%s: no bytes available, returning read value of %d\n", __argv[0], r_out);
+			f->flags |= STDIO_EOF;
+			return r_out;
+		}
+
+		//fprintf(stderr, "%s: reading until %d reaches %d or %d reaches 0\n", __argv[0], f->read_from, f->offset, len);
+		while (f->read_from < f->offset && len > 0 && f->available > 0) {
+			*out = f->read_buf[f->read_from];
+			len--;
+			f->read_from++;
+			f->available--;
+			out++;
+			r_out += 1;
+		}
+	}
+
+	//fprintf(stderr, "%s: read completed, returning read value of %d\n", __argv[0], r_out);
+	return r_out;
+}
+
+static void parse_mode(const char * mode, int * flags_, int * mask_) {
+	const char * x = mode;
+
+	int flags = 0;
+	int mask = 0644;
+
+	while (*x) {
+		if (*x == 'a') {
+			flags |= O_WRONLY;
+			flags |= O_APPEND;
+			flags |= O_CREAT;
+		}
+		if (*x == 'w') {
+			flags |= O_WRONLY;
+			flags |= O_CREAT;
+			flags |= O_TRUNC;
+			mask = 0666;
+		}
+		if (*x == '+') {
+			flags |= O_RDWR;
+			flags &= ~(O_APPEND); /* uh... */
+		}
+		if (*x == 'x') {
+			flags |= O_EXCL;
+		}
+		if (*x == 'e') {
+			flags |= O_CLOEXEC;
+		}
+		++x;
+	}
+
+	*flags_  = flags;
+	*mask_ = mask;
+}
+
+
+FILE * fopen(const char *path, const char *mode) {
+
+	int flags, mask;
+	parse_mode(mode, &flags, &mask);
+	int fd = syscall_open(path, flags, mask);
+
+	if (fd < 0) {
+		errno = -fd;
+		return NULL;
+	}
+
+	FILE * out = malloc(sizeof(FILE));
+	memset(out, 0, sizeof(struct _FILE));
+	out->fd = fd;
+	out->read_buf = mmap(NULL, BUFSIZ, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	out->bufsiz = BUFSIZ;
+	out->available = 0;
+	out->read_from = 0;
+	out->offset = 0;
+	out->ungetc = -1;
+	out->flags = 0;
+	out->_name = strdup(path);
+
+	out->write_buf = mmap(NULL, BUFSIZ, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	out->written = 0;
+	out->wbufsiz = BUFSIZ;
+
+	out->next = _head;
+	if (_head) _head->prev = out;
+	_head = out;
+
+	return out;
+}
+
+/* This is very wrong */
+FILE * freopen(const char *path, const char *mode, FILE * stream) {
+
+	if (path) {
+		fflush(stream);
+		free(stream->_name);
+		int ret = syscall_close(stream->fd);
+		if (ret < 0) {
+			errno = -ret;
+			return NULL;
+		}
+		int flags, mask;
+		parse_mode(mode, &flags, &mask);
+		int fd = syscall_open(path, flags, mask);
+		stream->fd = fd;
+		stream->available = 0;
+		stream->read_from = 0;
+		stream->offset = 0;
+		stream->ungetc = -1;
+		stream->flags = 0;
+		stream->_name = strdup(path);
+		stream->written = 0;
+		if (fd < 0) {
+			errno = -fd;
+			return NULL;
+		}
+	}
+
+	return stream;
+}
+
+int ungetc(int c, FILE * stream) {
+	if (stream->ungetc > 0)
+		return EOF;
+
+	return (stream->ungetc = c);
+}
+
+FILE * fdopen(int fd, const char *mode){
+	FILE * out = malloc(sizeof(FILE));
+	memset(out, 0, sizeof(struct _FILE));
+	out->fd = fd;
+	out->read_buf = mmap(NULL, BUFSIZ, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	out->bufsiz = BUFSIZ;
+	out->available = 0;
+	out->read_from = 0;
+	out->offset = 0;
+	out->ungetc = -1;
+	out->flags = 0;
+
+	char tmp[30];
+	sprintf(tmp, "fd[%d]", fd);
+	out->_name = strdup(tmp);
+
+	out->write_buf = mmap(NULL, BUFSIZ, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	out->written = 0;
+	out->wbufsiz = BUFSIZ;
+
+	out->next = _head;
+	if (_head) _head->prev = out;
+	_head = out;
+
+	return out;
+}
+
+int _fwouldblock(FILE * stream) {
+	return !stream->available;
+}
+
+int fclose(FILE * stream) {
+	fflush(stream);
+	int out = syscall_close(stream->fd);
+	free(stream->_name);
+	if (stream->bufflags & STDIO_BUF_READ_FREE) {
+		free(stream->read_buf);
+	} else if (stream->read_buf) {
+		munmap(stream->read_buf, BUFSIZ);
+	}
+	stream->read_buf = NULL;
+	if (stream->bufflags & STDIO_BUF_WRITE_FREE) {
+		free(stream->write_buf);
+	} else if (stream->write_buf) {
+		munmap(stream->write_buf, BUFSIZ);
+	}
+	stream->write_buf = NULL;
+	if (stream == &__stdin || stream == &__stdout || stream == &__stderr) {
+		return out;
+	} else {
+
+		if (stream->prev) stream->prev->next = stream->next;
+		if (stream->next) stream->next->prev = stream->prev;
+		if (stream == _head) _head = stream->next;
+
+		free(stream);
+		return out;
+	}
+}
+
+static char * _whence_str(int whence) {
+	if (whence == SEEK_SET) return "SEEK_SET";
+	if (whence == SEEK_CUR) return "SEEK_CUR";
+	if (whence == SEEK_END) return "SEEK_END";
+	return "?";
+}
+
+int fseek(FILE * stream, long offset, int whence) {
+	if (stream->read_from && whence == SEEK_CUR) {
+		if (__argv[0] && strcmp(__argv[0], "ld.so")) {
+			if (__libc_debug) {
+				fprintf(stderr, "%s: fseek(%s, %ld, %s)\n", __argv[0], stream->_name, offset, _whence_str(whence));
+				fprintf(stderr, "\033[33;3mWARNING\033[0m: seeking when offset is currently %d\n", stream->read_from);
+				fprintf(stderr, "\033[33;3mWARNING\033[0m: this may not be reflected in kernel\n");
+			}
+		}
+		offset = offset + stream->read_from + stream->last_read_start;
+		whence = SEEK_SET;
+	}
+	if (stream->written) {
+		fflush(stream);
+	}
+	stream->offset = 0;
+	stream->read_from = 0;
+	stream->available = 0;
+	stream->ungetc = -1;
+	stream->flags = 0;
+
+	int resp = syscall_seek(stream->fd,offset,whence);
+	if (resp < 0) {
+		errno = -resp;
+		return -1;
+	}
+	return 0;
+}
+
+long ftell(FILE * stream) {
+	if (__argv[0] && strcmp(__argv[0], "ld.so") && __libc_debug) {
+		fprintf(stderr, "%s: ftell(%s)\n", __argv[0], stream->_name);
+	}
+	if (stream->written) {
+		fflush(stream);
+	}
+	if (stream->read_from || stream->last_read_start) {
+		return stream->last_read_start + stream->read_from;
+	}
+	stream->offset = 0;
+	stream->read_from = 0;
+	stream->available = 0;
+	stream->ungetc = -1;
+	stream->flags = 0;
+	long resp = syscall_seek(stream->fd, 0, SEEK_CUR);
+	if (resp < 0) {
+		errno = -resp;
+		return -1;
+	}
+	return resp;
+}
+
+int fgetpos(FILE *stream, fpos_t *pos) {
+	long ret = ftell(stream);
+	if (ret == -1) return -1;
+
+	*pos = ret;
+	return 0;
+}
+
+int fsetpos(FILE *stream, const fpos_t *pos) {
+	return fseek(stream, *pos, SEEK_SET);
+}
+
+size_t fread(void *ptr, size_t size, size_t nmemb, FILE * stream) {
+	char * tracking = (char*)ptr;
+	for (size_t i = 0; i < nmemb; ++i) {
+		size_t r = read_bytes(stream, tracking, size);
+		tracking += r;
+		if (r < size) {
+			return i;
+		}
+	}
+	return nmemb;
+}
+
+size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE * stream) {
+	char * tracking = (char*)ptr;
+	for (size_t i = 0; i < nmemb; ++i) {
+		size_t r = write_bytes(stream, tracking, size);
+		tracking += r;
+		if (r < size) {
+			return i;
+		}
+	}
+	return nmemb;
+}
+
+int fileno(FILE * stream) {
+	return stream->fd;
+}
+
+int fputs(const char *s, FILE *stream) {
+	while (*s) {
+		fputc(*s++, stream);
+	}
+	return 0;
+}
+
+int fputc(int c, FILE *stream) {
+	char data[] = {c};
+	write_bytes(stream, data, 1);
+	return c;
+}
+
+int putc(int c, FILE *stream) __attribute__((weak, alias("fputc")));
+
+int fgetc(FILE * stream) {
+	char buf[1];
+	size_t r = read_bytes(stream, buf, 1);
+	if (!r) {
+		stream->flags |= STDIO_EOF;
+		return EOF;
+	}
+	return (unsigned char)buf[0];
+}
+
+int getc(FILE * stream) __attribute__((weak, alias("fgetc")));
+
+int getchar(void) {
+	return fgetc(stdin);
+}
+
+char *fgets(char *s, int size, FILE *stream) {
+	if (size == 0) return NULL;
+	if (size == 1) return *s = '\0', s;
+	int c;
+	char * out = s;
+	while ((c = fgetc(stream)) >= 0) {
+		*s++ = c;
+		size--;
+		*s = '\0';
+		if (size == 1 || c == '\n') {
+			return out;
+		}
+	}
+	if (c == EOF) {
+		stream->flags |= STDIO_EOF;
+		if (out == s) {
+			return NULL;
+		} else {
+			*s = '\0';
+			return out;
+		}
+	}
+	return NULL;
+}
+
+int putchar(int c) {
+	return fputc(c, stdout);
+}
+
+void rewind(FILE *stream) {
+	fseek(stream, 0, SEEK_SET);
+}
+
+void setbuf(FILE * stream, char * buf) {
+	// ...
+}
+
+int feof(FILE * stream) {
+	return !!(stream->flags & STDIO_EOF);
+}
+
+void clearerr(FILE * stream) {
+	stream->flags = ~(STDIO_ERROR | STDIO_EOF);
+}
+
+int ferror(FILE * stream) {
+	return !!(stream->flags & STDIO_ERROR);
+}
+
+ssize_t getdelim(char **restrict lineptr, size_t *restrict n, int delimiter, FILE *restrict stream) {
+	if (!lineptr || !n) {
+		errno = EINVAL;
+		/* XXX Are we supposed to set the stream to failed for this case? Seems dubious. */
+		return -1;
+	}
+
+	size_t c = 0;
+	while (1) {
+		int i = fgetc(stream);
+
+		if (*n <= c + 1) {
+			size_t nn = *n < 120 ? 120 : (*n * 2);
+			/* TODO: We don't define SSIZE_MAX? Anyway, ssize_t is typedefed to long on all both of our supported
+			 * platforms, so use LONG_MAX here as a replacement. size_t should be able to hold SSIZE_MAX * 2, so
+			 * the above calculation should not overflow and we can check here if *n has gotten too big. */
+			if (nn > LONG_MAX) nn = LONG_MAX;
+			if (nn <= c + 1) {
+				/* ... and this check should only trip if we've maxed up *n to SSIZE_MAX
+				 *     and it's still not big enought to fit our data. */
+				errno = EOVERFLOW;
+				return -1;
+			}
+			char * nlineptr = realloc(*lineptr, nn);
+			if (!nlineptr) return -1; /* malloc failure */
+			*n = nn;
+			*lineptr = nlineptr;
+		}
+
+		if (i == EOF) {
+			(*lineptr)[c] = '\0';
+			if (c) return c;
+			return -1;
+		}
+
+		(*lineptr)[c++] = i;
+		if (i == delimiter) break;
+	}
+
+	(*lineptr)[c] = '\0';
+	return c;
+}
+
+ssize_t getline(char **restrict lineptr, size_t *restrict n, FILE *restrict stream) {
+	return getdelim(lineptr, n, '\n', stream);
+}

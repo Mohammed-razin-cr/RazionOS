@@ -1,0 +1,15 @@
+#!/bin/esh
+
+# Start wallpaper
+cd ~/Desktop
+file-browser --wallpaper &
+cd ~
+
+# Start toast daemon
+toastd --really # Daemonizes
+
+# Login toast notifications
+show-toasts.krk &
+
+# Replace us with the panel
+exec panel --really

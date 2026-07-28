@@ -1,0 +1,184 @@
+/**
+ * @brief Display system information.
+ *
+ * Similar to tools like 'screenfetch', this displays information
+ * about ToaruOS, the current machine state, and the user's
+ * configuration options, alongside a terminal-safe rendition
+ * of the OS's logo.
+ *
+ * This is a bit overcomplicated as we used to show an elaborate
+ * logo from a BMP/PNG, but our current logo can be nicely
+ * represented with block characters so that's kind moot; maybe
+ * this should be simplified...
+ *
+ * Uses a few other utilities:
+ *   hostname
+ *   uname -sr
+ *   uptime -p
+ *   msk count
+ *   sh -v
+ *   yutani-query resolution
+ *   font-tool -n
+ *   cpu-name.krk
+ *   free -ut
+ *
+ * @copyright
+ * This file is part of ToaruOS and is released under the terms
+ * of the NCSA / University of Illinois License - see LICENSE.md
+ * Copyright (C) 2015-2021 K. Lange
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/utsname.h>
+
+#include <toaru/graphics.h>
+#include <toaru/termemu.h>
+
+#define NUM_DATA_LINES 30
+
+char data_lines[NUM_DATA_LINES][100];
+const char * prog_lines[NUM_DATA_LINES] = {NULL};
+
+#define C_A "\033[38;5;43;1m"
+#define C_O "\033[0m"
+
+void print_thing(int j) {
+	printf("\033[0m  %s", data_lines[j]);
+	fflush(stdout);
+	if (prog_lines[j]) {
+		system(prog_lines[j]);
+	} else {
+		printf("\n");
+	}
+}
+
+static void reset(void) {
+	printf("\033[0m");
+}
+
+static int term_is_toaru = 0;
+static void foreground_color(uint32_t color) {
+	printf(term_is_toaru ? "\033[38;6;%d;%d;%d;%dm" : "\033[38;2;%d;%d;%dm",
+		(int)_RED(color), (int)_GRE(color), (int)_BLU(color), (int)_ALP(color));
+}
+
+static void background_color(uint32_t color) {
+	printf(term_is_toaru ? "\033[48;6;%d;%d;%d;%dm" : "\033[48;2;%d;%d;%dm",
+		(int)_RED(color), (int)_GRE(color), (int)_BLU(color), (int)_ALP(color));
+}
+
+int main(int argc, char * argv[]) {
+
+	/* Prepare data */
+	char * user = getenv("USER");
+	char * wm_theme = getenv("WM_THEME");
+	char * term = getenv("TERM");
+	term_is_toaru = term && strstr(term,"toaru");
+
+	int i = 0;
+
+	prog_lines[i] = "hostname";
+	sprintf(data_lines[i++], C_A "%s" C_O "@" C_A, user);
+
+	prog_lines[i] = ". /etc/os-release; echo ${PRETTY_NAME}";
+	sprintf(data_lines[i++], C_A "OS: " C_O);
+
+	prog_lines[i] = "uname -sr";
+	sprintf(data_lines[i++], C_A "Kernel: " C_O);
+
+	prog_lines[i] = "uptime -p";
+	sprintf(data_lines[i++], C_A "Uptime: " C_O);
+
+	prog_lines[i] = "msk count";
+	sprintf(data_lines[i++], C_A "Packages: " C_O);
+
+	prog_lines[i] = "rzsh -v";
+	sprintf(data_lines[i++], C_A "Shell: " C_O);
+
+	prog_lines[i] = "if not yutani-query resolution then echo '(not connected)' 2>/dev/null";
+	sprintf(data_lines[i++], C_A "Resolution: " C_O);
+
+	/* no command */
+	sprintf(data_lines[i++], C_A "Desktop: " C_O "Razion Desktop (Yutani)");
+
+	/* from environment */
+	sprintf(data_lines[i++], C_A "WM Theme: " C_O "%s", wm_theme);
+
+	prog_lines[i] = "font-tool -n";
+	sprintf(data_lines[i++], C_A "Font: " C_O);
+
+	prog_lines[i] = "cpu-name.krk";
+	sprintf(data_lines[i++], C_A "CPU: " C_O);
+
+	prog_lines[i] = "free -ut";
+	sprintf(data_lines[i++], C_A "RAM: " C_O);
+
+	sprite_t logo;
+	if (load_sprite(&logo, "/usr/share/icons/sysinfo-logo.png")) {
+		fprintf(stderr, "%s: failed to load OS icon\n", argv[0]);
+		return 1;
+	}
+
+	int j = 0;
+	for (int y = 0; y < logo.height; y += 2) {
+		for (int x = 0; x < logo.width; x += 1) {
+			unsigned char r_t, g_t, b_t, a_t, r_b, g_b, b_b, a_b;
+			r_t = _RED(SPRITE((&logo),x,y));
+			g_t = _GRE(SPRITE((&logo),x,y));
+			b_t = _BLU(SPRITE((&logo),x,y));
+			a_t = _ALP(SPRITE((&logo),x,y));
+			r_b = g_b = b_b = a_b = 0;
+			if (y != logo.height - 1) {
+				r_b = _RED(SPRITE((&logo),x,y+1));
+				g_b = _GRE(SPRITE((&logo),x,y+1));
+				b_b = _BLU(SPRITE((&logo),x,y+1));
+				a_b = _ALP(SPRITE((&logo),x,y+1));
+			}
+
+			uint32_t out = alpha_blend_rgba(
+				rgba(0,0,0,TERM_DEFAULT_OPAC),
+				premultiply(rgba(r_t, g_t, b_t, a_t)));
+
+			uint32_t back = alpha_blend_rgba(
+				rgba(0,0,0,TERM_DEFAULT_OPAC),
+				premultiply(rgba(r_b, g_b, b_b, a_b)));
+
+			/* Are both cells transparent? */
+			if (a_t == 0 && a_b == 0) {
+				reset();
+				printf(" ");
+				continue;
+			}
+
+			if (a_b == 0) {
+				reset();
+				foreground_color(out);
+				printf("▀");
+			} else if (a_t == 0) {
+				reset();
+				foreground_color(back);
+				printf("▄");
+			} else {
+				foreground_color(back);
+				background_color(out);
+				printf("▄");
+			}
+		}
+		if (j < i) {
+			print_thing(j);
+			j++;
+		} else {
+			printf("\033[0m\n");
+		}
+	}
+
+	while (j < i) {
+		for (int x = 0; x < logo.width; x++) {
+			printf(" ");
+		}
+		print_thing(j);
+		j++;
+	}
+}

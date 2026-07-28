@@ -1,0 +1,174 @@
+.TH TERMINAL 1 "March, 2026"
+
+.SH NAME
+terminal \- graphical terminal emulator
+
+.SH SYNOPSIS
+\fBterminal\fP [\fB\-FbexnB\fP] [\fB\-s\fP \fIscale\fP] [\fB\-g\fP [\fB@\fP]\fIW\fP\fBx\fP\fIH\fP] [\fB\-S\fP \fIlines\fP] [\fIcommand\fP [\fIarg\fP]...]
+.br
+\fBterminal\fP [\fB\-FbexnB\fP] [\fB\-s\fP \fIscale\fP] [\fB\-g\fP [\fB@\fP]\fIW\fP\fBx\fP\fIH\fP] [\fB\-S\fP \fIlines\fP] \fB\-l\fP
+
+.SH DESCRIPTION
+This is the standard ToaruOS terminal emulator. It supports a wide range of escape sequences,
+TrueType and bitmap fonts, scrollback, text selection, mouse input, 24-bit color, and even
+some basic Unicode if you have the right fonts.
+
+.SS Options
+
+.TP
+.B \-F \fRor\fP \-\-fullscreen
+Run the terminal as the bottom window of a Yutani session, taking up the whole screen.
+This option is generally used by the startup scripts to run "single user mode" and is not
+recommended for typical users.
+
+.TP
+.B \-b \fRor\fP \-\-bitmap[=yes]
+Enable the bitmap font by default. This can also be toggled using menus at runtime.
+
+.TP
+.B \-\-bitmap=no
+Disable the bitmap font.
+
+.TP
+.B \-e \fRor\fP \-\-emulatebold[=yes]
+When using the bitmap font, emulate bold text by double striking gylphs.
+This may result in a lack of kerning, especially in capitalized text.
+
+.TP
+.B \-\-emulatebold=no
+Disable emulation of bold text with the bitmap font.
+
+.TP
+.B \-s \fRor\fP \-\-scale \fIscale\fP
+Set the font scaling, when using a TrueType font, to the given multiplier.
+
+.TP
+.B \-x \fRor\fP \-\-grid
+When resizing the terminal, the window size will be rounded to values that
+ensure that the main content is always aligned to cells, with no extra margins.
+
+.TP
+.B \-n \fRor\fP \-\-no\-frame
+Disables window decorations for the terminal. Window decorations can also be
+toggled from the context menu.
+
+.TP
+.B \-g \fRor\fP \-\-geometry \fR[\fP@\fR]\fP\fIW\fPx\fIH\fP
+Start the terminal with the requested size.
+With a leading \fB@\fP, the size is specified in colums (\fIW\fP) and rows (\fIH\fP).
+Without a \fB@\fP, the size is specified in pixels.
+
+.TP
+.B \-B \fRor\fP \-\-blurred
+Make the entire OS slow to a crawl by enabling blur-behind.
+
+.TP
+.B \-S \fRor\fP \-\-scrollback \fIlines\fP
+Set the scrollback buffer size to \fIlines\fP lines, 0 for unlimited.
+
+.TP
+.B \-l \fRor\fP \-\-login
+Force all new sessions in this terminal to run \fBlogin\-loop\fP instead of
+the user's shell.
+No other arguments may be provided.
+
+.TP
+.B \-\-beep\-on\-bell[=yes]
+Produce an audible beep when the \fBBEL\fP character is output.
+
+.TP
+.B \-\-beep\-on\-bell=no
+Do not produce an audible beep on the \fBBEL\fP character.
+
+.TP
+.B \-\-tab\-numbers[=yes]
+Display tab numbers in tab titles.
+
+.TP
+.B \-\-tab\-numbers=no
+Do not display tab numbers in tab titles.
+
+.SH KEYBOARD SHORTCUTS
+When the terminal is focused, some keyboard inputs are interpreted specially:
+
+.TP
+.B Ctrl\-Shift\-T
+Open a new tab.
+
+.TP
+.B Alt\-1 \fRthrough\fP Alt\-9
+Switch to a numbered tab.
+
+.TP
+.B Ctrl\-Shift\-C
+Copy the selected text.
+
+.TP
+.B Ctrl\-Shift\-V
+Paste text from the clipboard into the terminal.
+
+.TP
+.B Ctrl\-0 \fR(zero)
+Reset font scaling to 1x.
+
+.TP
+.B Ctrl\-Shift\-= (Ctrl\-+)
+Increase the font scaling size by a factor of 1.2.
+
+.TP
+.B Ctrl\-\- \fR(minus)
+Reduce the font scaling size by a factor of 0.83333333.
+
+.SH CONFIGURATION
+If present, \fBTerminal\fP will load a configuration from \fB~/.terminal.json\fP.
+Configuration options generally match the behavior of the equivalent command\-line option.
+The command\-line options override the configuration file.
+.PP
+The file should contain a JSON object with any of the following keys:
+
+.TP
+.B bitmap \fIbool\fP
+Enable the bitmap font.
+
+.TP
+.B emulatebold \fIbool\fP
+When using the bitmap font, emulate bold text by double striking gylphs.
+
+.TP
+.B scale\-fonts \fIbool\fP
+Enable or disable font scaling.
+
+.TP
+.B font\-scaling \fInumber\fP
+Set the font scaling multiplier.
+
+.TP
+.B max\-scrollback \fInumber\fP
+Set the number of lines of scrollback to save.
+
+.TP
+.B beep\-on\-bell \fIbool\fP
+Produce an audible beep in response to the \fBBEL\fP character.
+
+.TP
+.B tab\-numbers \fIbool\fP
+Display tab numbers in tab titles.
+
+.TP
+.B no\-frame \fIbool\fP
+Disable window decorations.
+
+.TP
+.B no\-menu\-bar \fIbool\fP
+Hide the menu bar and tabs.
+
+.TP
+.B fg\-name \fIbool\fP
+Show the name of the foreground group leader in tab titles.
+
+.SH SEE ALSO
+.BR terminal-vga (1),
+.BR libtoaru_termemu (3)
+
+.SH AUTHOR
+This terminal emulator was written by K. Lange <klange@toaruos.org>

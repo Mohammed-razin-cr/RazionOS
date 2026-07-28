@@ -1,0 +1,10 @@
+from util import parse_version
+let MAJOR, MINOR, LOWER = parse_version()
+print(f'''PRETTY_NAME="RazionOS 0.1 Alpha"
+NAME="RazionOS"
+VERSION_ID="0.1"
+VERSION="0.1 Alpha"
+ID=razion
+VARIANT="ToaruOS-derived desktop"
+KERNEL_BASE_VERSION="{MAJOR}.{MINOR}.{LOWER}"
+UPSTREAM_URL="https://github.com/klange/toaruos"''')

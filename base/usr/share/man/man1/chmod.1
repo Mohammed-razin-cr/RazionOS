@@ -1,0 +1,71 @@
+.TH CHMOD 1 "May, 2026"
+
+.SH NAME
+\fBchmod\fP \- Change the mode of a file.
+
+.SH SYNOPSIS
+\fBchmod\fP [\fB\-v\fP] [\fB\-R\fP] \fImode\-string\fP \fIfile\fP...
+
+.SH DESCRIPTION
+Attempts to change the mode of each \fIfile\fP argument as specified in \fImode-string\fP.
+.PP
+The \fImode-string\fP may be either an octal mode string or a series of "clauses", separated
+by commas, describing actions to take on particular parts of the mode.
+.PP
+A "clause" begins with zero or more of \fBu\fP, \fBg\fP, \fBo\fP, or \fBa\fP (\fIwhos\fP), followed by
+one of \fB\-\fP, \fB+\fP, or \fB=\fP (\fIactions\fP), followed by either one of \fBu\fP, \fBg\fP, or \fBo\fP
+to copy permissions from those classes (as of the last processed clause, or the original permissions of
+the file before \fBchmod\fP was invoked), or zero or more of \fBr\fP, \fBw\fP, \fBx\fP, \fBX\fP,
+or \fBs\fP (\fIpermissions\fP).
+.PP
+The "\fIwhos\fP" represent \fBu\fPser, \fBg\fProup\fP, \fBo\fPther, and \fBa\fPll.
+.PP
+The "\fIactions\fP" represent \fBadd\fP (+), \fBsubtract\fP (\-), and \fBset\fP (=).
+.PP
+When a \fIwho\fP is not specified, \fBa\fPll is implied, but the current file permission mask is
+applied to the bits to be modified; if a bit is set in the file permission mask, the corresponding
+bit will not be added, subtracted, or set in the new file mode.
+.PP
+The basic "\fIpermissions\fP" represent \fBr\fPead, \fBw\fPrite, and e\fBx\fPecute.
+.PP
+The \fBX\fP permission means "execute" if the file is a directory, or if one of the execute bits was
+already set before the invocation of \fBchmod\fP; otherwise, it is ignored.
+.PP
+The \fBs\fP permission is only meaningful if the \fBwho\fP includes \fBu\fP or \fBg\fP (or it is implied
+by being empty or being \fBa\fP), and modifies the \fBsetuid\fP or \fBsetgid\fP permission, respectively.
+
+.SS Options
+
+.TP
+.B \-v
+Be verbose: Print, to standard output, a description of changes, failures, and maintained permissions.
+
+.TP
+.B \-R
+Ostensibly, operate recursively.
+This option is not supported at the moment; each directory will produce a diagnostic to this effect.
+
+.SH EXIT STATUS
+.TP
+0
+All of the files were successfully modified by
+.IR chmod (2)
+
+.TP
+1
+An error occurred.
+
+.TP
+2
+An invalid \fImode\-string\fP was specified.
+
+.SH STANDARDS
+POSIX specifies a \fB\-R\fP flag that is not supported in this implementation as of writing.
+
+.SH NOTES
+When using a \fImode\-string\fP that begins with a \- character, be sure to terminate the option
+list with \fB\-\-\fP first.
+
+.SH SEE ALSO
+.BR chmod (2)
+

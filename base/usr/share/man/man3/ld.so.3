@@ -1,0 +1,60 @@
+.TH ld.so 3 "May, 2026"
+
+.SH NAME
+\fBld.so\fP \- dynamic binary loader
+
+.SH SYNOPSIS
+\fBld.so\fP \fIbinary\fP [\fIargs\fP]...
+.br
+\fBld.so\fP \fB\-e\fP \fIbinary_path\fP [\fIargs\fP]...
+
+.SH DESCRIPTION
+\fBld.so\fP links and executes dynamic ELF binaries.
+It is normally set as the interpreter for these binaries in ToaruOS, as \fB/lib/ld.so\fP.
+
+.SH OPTIONS
+.TP
+.B \-e \fIbinary_path\fP \fRor\fP \-\-exe \fIbinary_path\fP
+Execute \fIbinary_path\fP with \fIargs\fP starting from \fIargv[0]\fP.
+
+.TP
+.B \-\-list
+Operate as
+.IR ldd (1).
+
+.TP
+.B \-\-preload \fIlibraries\fP
+Overrides \fBLD_PRELOAD\fP.
+
+.TP
+.B \-\-library\-path \fIpath\fP
+Overrides \fBLD_LIBRARY_PATH\fP.
+
+.TP
+.B \-\-inhibit\-rpath \fIlibraries\fP
+Prevent \fBDT_RPATH\fP and \fBDT_RUNPATH\fP from being honored for the given \fIlibraries\fP.
+To include the main executable in this list, use an empty string.
+
+.SH ENVIRONMENT
+.TP
+.B LD_LIBRARY_PATH
+Determines where dynamic libraries will be searched.
+This should be a :\-separated list of paths.
+If unset, the default is \fB/lib:/usr/lib\fP.
+\fBLD_LIBRARY_PATH\fP will be ignored when running a set-user-ID or set-group-ID binary.
+
+.TP
+.B LD_SHOW_AUXV
+Print information about the auxiliary vector received from the kernel.
+
+.TP
+.B LD_DEBUG
+If set, logs will be printed to standard error.
+
+.TP
+.B LD_PRELOAD
+A list of libraries, separated by spaces or colons, to load before everything else.
+
+.SH NOTES
+\fB/lib/ld.so\fP is a symbolic link to \fB/lib/libc.so\fP.
+

@@ -1,0 +1,7 @@
+{
+    "city": "guess",
+    "units": "metric",
+
+    "--comment": "Add your own OpenWeatherMap API key with weather-configurator before using the weather widget.",
+    "key": ""
+}

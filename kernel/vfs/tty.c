@@ -1,0 +1,854 @@
+/**
+ * @file kernel/vfs/tty.c
+ * @brief PTY driver.
+ *
+ * @copyright
+ * This file is part of ToaruOS and is released under the terms
+ * of the NCSA / University of Illinois License - see LICENSE.md
+ * Copyright (C) 2013-2021 K. Lange
+ */
+#include <stddef.h>
+#include <bits/errno.h>
+#include <kernel/vfs.h>
+#include <kernel/pipe.h>
+#include <kernel/string.h>
+#include <kernel/printf.h>
+#include <kernel/ringbuffer.h>
+#include <kernel/pty.h>
+#include <kernel/hashmap.h>
+#include <kernel/process.h>
+#include <kernel/signal.h>
+#include <kernel/time.h>
+#include <kernel/mmu.h>
+#include <sys/ioctl.h>
+#include <sys/termios.h>
+#include <sys/signal_defs.h>
+
+#define TTY_BUFFER_SIZE 4096
+
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+
+static int _pty_counter = 0;
+static hashmap_t * _pty_index = NULL;
+static fs_node_t * _pty_dir = NULL;
+static fs_node_t * _dev_tty = NULL;
+
+static void pty_teardown(pty_t * pty) {
+	if (pty->name) hashmap_remove(_pty_index, (void*)pty->name);
+	process_erase_field(offsetof(process_t,pty), sizeof(pty_t*), &pty);
+
+	free(pty->canon_buffer);
+	ring_buffer_destroy(pty->in);
+	ring_buffer_destroy(pty->out);
+	free(pty);
+}
+
+static ssize_t pty_write_in(pty_t * pty, uint8_t c) {
+	return ring_buffer_write(pty->in, 1, &c);
+}
+
+static ssize_t pty_write_out(pty_t * pty, uint8_t c) {
+	return ring_buffer_write(pty->out, 1, &c);
+}
+
+#define IN(character)   do { ssize_t written = pty->write_in(pty, (uint8_t)character); if (written < 0) return written; } while (0)
+#define OUT(character)  do { ssize_t written = pty->write_out(pty, (uint8_t)character); if (written < 0) return written; } while (0)
+
+static ssize_t dump_input_buffer(pty_t * pty) {
+	char * c = pty->canon_buffer;
+	ssize_t written = 0;
+	while (pty->canon_buflen > 0) {
+		IN(*c);
+		pty->canon_buflen--;
+		c++;
+		written++;
+	}
+	return written;
+}
+
+static void clear_input_buffer(pty_t * pty) {
+	pty->canon_buflen = 0;
+	pty->canon_buffer[0] = '\0';
+}
+
+ssize_t tty_output_process(pty_t * pty, uint8_t c) {
+	if (!(pty->tios.c_oflag & OPOST)) {
+		OUT(c);
+		return 1;
+	}
+
+	if (c == '\n' && (pty->tios.c_oflag & ONLCR)) {
+		c = '\n';
+		OUT(c);
+		c = '\r';
+		OUT(c);
+		return 1;
+	}
+
+	if (c == '\r' && (pty->tios.c_oflag & ONLRET)) {
+		return 1;
+	}
+
+	if (c >= 'a' && c <= 'z' && (pty->tios.c_oflag & OLCUC)) {
+		c = c + 'A' - 'a';
+		OUT(c);
+		return 1;
+	}
+
+	OUT(c);
+	return 1;
+}
+
+#define output_process(pty, chr) do { ssize_t written = tty_output_process(pty, chr); if (written < 0) return written; } while (0)
+
+static int is_control(int c) {
+	return c < ' ' || c == 0x7F;
+}
+
+static ssize_t tty_erase_one(pty_t * pty, int erase) {
+	if (pty->canon_buflen > 0) {
+		/* How many do we backspace? */
+		int vwidth = 1;
+		pty->canon_buflen--;
+		if (is_control(pty->canon_buffer[pty->canon_buflen])) {
+			/* Erase ^@ */
+			vwidth = 2;
+		}
+		pty->canon_buffer[pty->canon_buflen] = '\0';
+		if (pty->tios.c_lflag & ECHO) {
+			if (erase) {
+				for (int i = 0; i < vwidth; ++i) {
+					output_process(pty, '\010');
+					output_process(pty, ' ');
+					output_process(pty, '\010');
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+#define erase_one(pty, erase) do { ssize_t written = tty_erase_one(pty, erase); if (written < 0) return written; } while (0)
+
+ssize_t tty_input_process(pty_t * pty, uint8_t c) {
+	pty->slave->mtime = now();
+	if (pty->next_is_verbatim) {
+		pty->next_is_verbatim = 0;
+		if (pty->canon_buflen < pty->canon_bufsize) {
+			pty->canon_buffer[pty->canon_buflen] = c;
+			pty->canon_buflen++;
+		}
+		if (pty->tios.c_lflag & ECHO) {
+			if ((pty->tios.c_lflag & ECHOCTL) && is_control(c)) {
+				output_process(pty, '^');
+				output_process(pty, ('@'+c) % 128);
+			} else {
+				output_process(pty, c);
+			}
+		}
+		return 1;
+	}
+	if (pty->tios.c_lflag & ISIG) {
+		int sig = -1;
+		if (c == pty->tios.c_cc[VINTR]) {
+			sig = SIGINT;
+		} else if (c == pty->tios.c_cc[VQUIT]) {
+			sig = SIGQUIT;
+		} else if (c == pty->tios.c_cc[VSUSP]) {
+			sig = SIGTSTP;
+		}
+		/* VSUSP */
+		if (sig != -1) {
+			if (pty->tios.c_lflag & ECHO) {
+				if ((pty->tios.c_lflag & ECHOCTL) && is_control(c)) {
+					output_process(pty, '^');
+					output_process(pty, ('@' + c) % 128);
+				} else {
+					output_process(pty, c);
+				}
+			}
+			clear_input_buffer(pty);
+			if (pty->fg_proc) {
+				group_send_signal(pty->fg_proc, sig, 1);
+			}
+			return 1;
+		}
+	}
+#if 0
+	if (pty->tios.c_lflag & IXON ) {
+		/* VSTOP, VSTART */
+	}
+#endif
+
+	/* ISTRIP: Strip eighth bit */
+	if (pty->tios.c_iflag & ISTRIP) {
+		c &= 0x7F;
+	}
+
+	/* IGNCR: Ignore carriage return. */
+	if ((pty->tios.c_iflag & IGNCR) && c == '\r') {
+		return 1;
+	}
+
+	if ((pty->tios.c_iflag & INLCR) && c == '\n') {
+		/* INLCR: Translate NL to CR. */
+		c = '\r';
+	} else if ((pty->tios.c_iflag & ICRNL) && c == '\r') {
+		/* ICRNL: Convert carriage return. */
+		c = '\n';
+	}
+
+	if ((pty->tios.c_iflag & IUCLC) && (c >= 'A' && c <= 'Z')) {
+		c = c - 'A' + 'a';
+	}
+
+	if (pty->tios.c_lflag & ICANON) {
+
+		if (c == pty->tios.c_cc[VLNEXT] && (pty->tios.c_lflag & IEXTEN)) {
+			pty->next_is_verbatim = 1;
+			output_process(pty, '^');
+			output_process(pty, '\010');
+			return 1;
+		}
+
+		if (c == pty->tios.c_cc[VKILL]) {
+			while (pty->canon_buflen > 0) {
+				erase_one(pty, pty->tios.c_lflag & ECHOK);
+			}
+			if ((pty->tios.c_lflag & ECHO) && ! (pty->tios.c_lflag & ECHOK)) {
+				if ((pty->tios.c_lflag & ECHOCTL) && is_control(c)) {
+					output_process(pty, '^');
+					output_process(pty, ('@' + c) % 128);
+				} else {
+					output_process(pty, c);
+				}
+			}
+			return 1;
+		}
+		if (c == pty->tios.c_cc[VERASE]) {
+			/* Backspace */
+			erase_one(pty, pty->tios.c_lflag & ECHOE);
+			if ((pty->tios.c_lflag & ECHO) && ! (pty->tios.c_lflag & ECHOE)) {
+				if ((pty->tios.c_lflag & ECHOCTL) && is_control(c)) {
+					output_process(pty, '^');
+					output_process(pty, ('@' + c) % 128);
+				} else {
+					output_process(pty, c);
+				}
+			}
+			return 1;
+		}
+		if (c == pty->tios.c_cc[VWERASE] && (pty->tios.c_lflag & IEXTEN)) {
+			while (pty->canon_buflen && pty->canon_buffer[pty->canon_buflen-1] == ' ') {
+				erase_one(pty, pty->tios.c_lflag & ECHOE);
+			}
+			while (pty->canon_buflen && pty->canon_buffer[pty->canon_buflen-1] != ' ') {
+				erase_one(pty, pty->tios.c_lflag & ECHOE);
+			}
+			if ((pty->tios.c_lflag & ECHO) && ! (pty->tios.c_lflag & ECHOE)) {
+				if ((pty->tios.c_lflag & ECHOCTL) && is_control(c)) {
+					output_process(pty, '^');
+					output_process(pty, ('@' + c) % 128);
+				} else {
+					output_process(pty, c);
+				}
+			}
+			return 1;
+		}
+		if (c == pty->tios.c_cc[VEOF]) {
+			if (pty->canon_buflen) {
+				dump_input_buffer(pty);
+			} else {
+				ring_buffer_eof(pty->in);
+			}
+			return 1;
+		}
+
+		if (pty->canon_buflen < pty->canon_bufsize) {
+			pty->canon_buffer[pty->canon_buflen] = c;
+			pty->canon_buflen++;
+		}
+		if (pty->tios.c_lflag & ECHO) {
+			if ((pty->tios.c_lflag & ECHOCTL) && is_control(c) && c != '\n') {
+				output_process(pty, '^');
+				output_process(pty, ('@' + c) % 128);
+			} else {
+				output_process(pty, c);
+			}
+		}
+		if (c == '\n' || (pty->tios.c_cc[VEOL] && c == pty->tios.c_cc[VEOL])) {
+			if (!(pty->tios.c_lflag & ECHO) && (pty->tios.c_lflag & ECHONL)) {
+				output_process(pty, c);
+			}
+			pty->canon_buffer[pty->canon_buflen-1] = c;
+			dump_input_buffer(pty);
+			return 1;
+		}
+		return 1;
+	} else if (pty->tios.c_lflag & ECHO) {
+		if ((pty->tios.c_lflag & ECHOCTL) && is_control(c) && c != '\n') {
+			output_process(pty, '^');
+			output_process(pty, ('@' + c) % 128);
+		} else {
+			output_process(pty, c);
+		}
+	}
+	IN(c);
+	return 1;
+}
+
+static ssize_t tty_fill_name(pty_t * pty, size_t len, char * out) {
+	return snprintf((char*)out, len, "/dev/pts/%zd", pty->name);
+}
+
+int pty_ioctl(fs_node_t * node, pty_t * pty, unsigned long request, void * argp) {
+	switch (request) {
+		case IOCTLTTYNAME: {
+			if (!argp) return -EINVAL;
+			if (!mmu_validate_user_pointer(argp,sizeof(struct __tty_name),0)) return -EFAULT;
+			struct __tty_name * data = argp;
+			if (!mmu_validate_user_pointer(data->buf,data->len,MMU_PTR_WRITE)) return -EFAULT;
+			if ((unsigned int)pty->fill_name(pty, data->len, data->buf) >= data->len) return -ERANGE;
+			return 0;
+		}
+		case IOCTLTTYLOGIN:
+			/* Set the user id of the login user */
+			if (this_core->current_process->user != 0) return -EPERM;
+			if (!argp) return -EINVAL;
+			if (!mmu_validate_user_pointer(argp,sizeof(int),0)) return -EFAULT;
+			pty->slave->uid = *(int*)argp;
+			pty->master->uid = *(int*)argp;
+			return 0;
+		case TIOCSWINSZ:
+			if (!argp) return -EINVAL;
+			if (!mmu_validate_user_pointer(argp, sizeof(struct winsize), 0)) return -EFAULT;
+			memcpy(&pty->size, argp, sizeof(struct winsize));
+			if (pty->fg_proc) {
+				group_send_signal(pty->fg_proc, SIGWINCH, 1);
+			}
+			return 0;
+		case TIOCGWINSZ:
+			if (!argp) return -EINVAL;
+			if (!mmu_validate_user_pointer(argp, sizeof(struct winsize), MMU_PTR_WRITE)) return -EFAULT;
+			memcpy(argp, &pty->size, sizeof(struct winsize));
+			return 0;
+		case TCGETS:
+			if (!argp) return -EINVAL;
+			if (!mmu_validate_user_pointer(argp, sizeof(struct termios), MMU_PTR_WRITE)) return -EFAULT;
+			memcpy(argp, &pty->tios, sizeof(struct termios));
+			return 0;
+		case TIOCSPGRP:
+			if (!argp) return -EINVAL;
+			if (!mmu_validate_user_pointer(argp, sizeof(pid_t), 0)) return -EFAULT;
+			pty->fg_proc = *(pid_t *)argp;
+			return 0;
+		case TIOCGPGRP:
+			if (!argp) return -EINVAL;
+			if (!mmu_validate_user_pointer(argp, sizeof(pid_t), MMU_PTR_WRITE)) return -EFAULT;
+			if (node != pty->master && pty->ct_proc != this_core->current_process->session) return -ENOTTY;
+			*(pid_t *)argp = pty->fg_proc;
+			return 0;
+		case TIOCGSID:
+			if (!argp) return -EINVAL;
+			if (!mmu_validate_user_pointer(argp, sizeof(pid_t), MMU_PTR_WRITE)) return -EFAULT;
+			if (node != pty->master && pty->ct_proc != this_core->current_process->session) return -ENOTTY;
+			*(pid_t *)argp = pty->ct_proc;
+			return 0;
+		case TIOCSCTTY:
+			/* If this is already the control session, quietly ignore. */
+			if (this_core->current_process->session == this_core->current_process->id &&
+				pty->ct_proc == this_core->current_process->session) {
+				return 0;
+			}
+			/* If we aren't a session leader, we can't do this. */
+			if (this_core->current_process->session != this_core->current_process->id) {
+				return -EPERM;
+			}
+			/* If there's already a control session, only root can steal control, and only if *argp is 1
+			 * (on Linux, that's "if argp is 1", but we kinda messed this up by checking ioctl argp stuff
+			 * for bounds validity in the system call layer, so instead we use a pointer to 1... */
+			if (pty->ct_proc && (!argp || this_core->current_process->user != 0 || (*(int*)argp != 1))) {
+				return -EPERM;
+			}
+			pty->ct_proc = this_core->current_process->session;
+			this_core->current_process->process->pty = pty;
+			return 0;
+		case TCSETS:
+		case TCSETSW:
+			if (!argp) return -EINVAL;
+			if (!mmu_validate_user_pointer(argp, sizeof(struct termios), 0)) return -EFAULT;
+			/* TODO wait on output for SETSW */
+			if (!(((struct termios *)argp)->c_lflag & ICANON) && (pty->tios.c_lflag & ICANON)) {
+				/* Switch out of canonical mode, the dump the input buffer */
+				dump_input_buffer(pty);
+			}
+			goto tcset_common;
+		case TCSETSF:
+			clear_input_buffer(pty);
+			ring_buffer_discard(pty->in);
+		tcset_common:
+			memcpy(&pty->tios, argp, sizeof(struct termios));
+			return 0;
+		default:
+			return -ENOTTY;
+	}
+}
+
+ssize_t  read_pty_master(fs_node_t * node, off_t offset, size_t size, uint8_t *buffer) {
+	pty_t * pty = (pty_t *)node->device;
+
+	/* Standard pipe read */
+	return ring_buffer_read(pty->out, size, buffer);
+}
+ssize_t write_pty_master(fs_node_t * node, off_t offset, size_t size, uint8_t *buffer) {
+	pty_t * pty = (pty_t *)node->device;
+
+	size_t l = 0;
+	for (uint8_t * c = buffer; l < size; ++c, ++l) {
+		ssize_t o = tty_input_process(pty, *c);
+		if (o < 0 && !l) return o;
+	}
+
+	return l;
+}
+void      open_pty_master(fs_node_t * node, unsigned int flags) {
+	return;
+}
+void     close_pty_master(fs_node_t * node) {
+	pty_t * pty = (pty_t *)node->device;
+	ring_buffer_interrupt(pty->in);
+	ring_buffer_interrupt(pty->out);
+	ring_buffer_alert_waiters(pty->in);
+	ring_buffer_alert_waiters(pty->out);
+	if (pty->ct_proc) session_send_signal(pty->ct_proc, SIGHUP, 1);
+
+	spin_lock(pty->teardown);
+	pty->master_closed = 1;
+	if (pty->slave_closed) {
+		pty_teardown(pty);
+		return;
+	}
+	spin_unlock(pty->teardown);
+
+	return;
+}
+
+static int ignoring(int sig) {
+	if (this_core->current_process->blocked_signals & (1ULL << sig)) return 1;
+	if (this_core->current_process->signals[sig].handler == 1) return 1;
+	return 0;
+}
+
+ssize_t read_pty_slave(fs_node_t * node, off_t offset, size_t size, uint8_t *buffer) {
+	pty_t * pty = (pty_t *)node->device;
+
+	/* If this process *is* part of this tty's session, but is NOT in the foreground job
+	 * and it tries to read from the TTY, then send it SIGTTIN - but only if it's not
+	 * ignoring it. If it is ignoring, make the write fail with EIO. */
+	if (pty->ct_proc == this_core->current_process->session && pty->fg_proc && this_core->current_process->job != pty->fg_proc) {
+		if (ignoring(SIGTTIN)) return -EIO;
+		group_send_signal(this_core->current_process->job, SIGTTIN, 1);
+		return -ERESTARTSYS;
+	}
+
+	if (pty->tios.c_lflag & ICANON) {
+		return ring_buffer_read(pty->in, size, buffer);
+	} else {
+		if (pty->tios.c_cc[VMIN] == 0) {
+			return ring_buffer_read(pty->in, size, buffer);
+		} else {
+			ssize_t c = 0;
+			ssize_t vmin = MIN(pty->tios.c_cc[VMIN], size);
+			while (c < vmin) {
+				ssize_t r = ring_buffer_read(pty->in, size - c, buffer + c);
+				if (r <= 0) return c ? c : r;
+				c += r;
+			}
+			return c;
+		}
+	}
+}
+
+ssize_t write_pty_slave(fs_node_t * node, off_t offset, size_t size, uint8_t *buffer) {
+	pty_t * pty = (pty_t *)node->device;
+
+	if (pty->tios.c_lflag & TOSTOP) {
+		/* If TOSTOP is enabled and this process *is* part of this tty's session but
+		 * is NOT in the foreground job, then send the whole job SIGTTOU - but only
+		 * if we weren't ignoring SIGTTOU ourselves. If we were ignoring it, then
+		 * the write can continue without issue. */
+		if (pty->ct_proc == this_core->current_process->session && pty->fg_proc && this_core->current_process->job != pty->fg_proc) {
+			if (!ignoring(SIGTTOU)) {
+				group_send_signal(this_core->current_process->job, SIGTTOU, 1);
+				return -ERESTARTSYS;
+			}
+		}
+	}
+
+	size_t l = 0;
+	for (uint8_t * c = buffer; l < size; ++c, ++l) {
+		ssize_t o = tty_output_process(pty, *c);
+		if (o < 0) {
+			if (l) return l;
+			return o;
+		}
+	}
+
+	return l;
+}
+void      open_pty_slave(fs_node_t * node, unsigned int flags) {
+	return;
+}
+void     close_pty_slave(fs_node_t * node) {
+	pty_t * pty = (pty_t *)node->device;
+
+	spin_lock(pty->teardown);
+	pty->slave_closed = 1;
+	if (pty->master_closed) {
+		pty_teardown(pty);
+		return;
+	}
+	spin_unlock(pty->teardown);
+
+	return;
+}
+
+/*
+ * These are separate functions just in case I ever feel the need to do
+ * things differently in the slave or master.
+ */
+int ioctl_pty_master(fs_node_t * node, unsigned long request, void * argp) {
+	pty_t * pty = (pty_t *)node->device;
+	return pty_ioctl(node, pty, request, argp);
+}
+
+int ioctl_pty_slave(fs_node_t * node, unsigned long request, void * argp) {
+	pty_t * pty = (pty_t *)node->device;
+	return pty_ioctl(node, pty, request, argp);
+}
+
+static ssize_t pty_available_input(fs_node_t * node) {
+	pty_t * pty = (pty_t *)node->device;
+	return ring_buffer_unread(pty->in);
+}
+
+static ssize_t pty_available_output(fs_node_t * node) {
+	pty_t * pty = (pty_t *)node->device;
+	return ring_buffer_unread(pty->out);
+}
+
+static int check_pty_master(fs_node_t * node) {
+	pty_t * pty = (pty_t *)node->device;
+	if (ring_buffer_unread(pty->out) > 0) {
+		return 0;
+	}
+	return 1;
+}
+
+static int check_pty_slave(fs_node_t * node) {
+	pty_t * pty = (pty_t *)node->device;
+	if (ring_buffer_unread(pty->in) > 0) {
+		return 0;
+	}
+	return 1;
+}
+
+static int wait_pty_master(fs_node_t * node, void * process) {
+	pty_t * pty = (pty_t *)node->device;
+	ring_buffer_select_wait(pty->out, process);
+	return 0;
+}
+
+static int wait_pty_slave(fs_node_t * node, void * process) {
+	pty_t * pty = (pty_t *)node->device;
+	ring_buffer_select_wait(pty->in, process);
+	return 0;
+}
+
+fs_node_t * pty_master_create(pty_t * pty) {
+	fs_node_t * fnode = malloc(sizeof(fs_node_t));
+	memset(fnode, 0x00, sizeof(fs_node_t));
+
+	fnode->name[0] = '\0';
+	snprintf(fnode->name, 100, "pty master");
+	fnode->uid   = this_core->current_process->user;
+	fnode->gid   = this_core->current_process->user_group;
+	fnode->mask  = 0666;
+	fnode->flags = FS_PIPE;
+	fnode->read  =  read_pty_master;
+	fnode->write = write_pty_master;
+	fnode->open  =  open_pty_master;
+	fnode->close = close_pty_master;
+	fnode->selectcheck = check_pty_master;
+	fnode->selectwait  = wait_pty_master;
+	fnode->readdir = NULL;
+	fnode->finddir = NULL;
+	fnode->ioctl = ioctl_pty_master;
+	fnode->get_size = pty_available_output;
+	fnode->ctime   = now();
+	fnode->mtime   = now();
+	fnode->atime   = now();
+
+	fnode->device = pty;
+
+	return fnode;
+}
+
+static int chmod_pty_slave(fs_node_t * node, int mode) {
+	node->mask = mode;
+	return 0;
+}
+
+static int chown_pty_slave(fs_node_t * node, int uid, int gid) {
+	if (uid != -1) node->uid = uid;
+	if (gid != -1) node->gid = gid;
+	return 0;
+}
+
+fs_node_t * pty_slave_create(pty_t * pty) {
+	fs_node_t * fnode = malloc(sizeof(fs_node_t));
+	memset(fnode, 0x00, sizeof(fs_node_t));
+
+	fnode->name[0] = '\0';
+	snprintf(fnode->name, 100, "pty slave");
+	fnode->uid   = this_core->current_process->user;
+	fnode->gid   = 3; /* tty group */
+	fnode->mask  = 0620;
+	fnode->flags = FS_CHARDEVICE;
+	fnode->read  =  read_pty_slave;
+	fnode->write = write_pty_slave;
+	fnode->open  =  open_pty_slave;
+	fnode->close = close_pty_slave;
+	fnode->selectcheck = check_pty_slave;
+	fnode->selectwait  = wait_pty_slave;
+	fnode->readdir = NULL;
+	fnode->finddir = NULL;
+	fnode->ioctl = ioctl_pty_slave;
+	fnode->chmod = chmod_pty_slave;
+	fnode->chown = chown_pty_slave;
+	fnode->get_size = pty_available_input;
+	fnode->ctime   = now();
+	fnode->mtime   = now();
+	fnode->atime   = now();
+
+	fnode->device = pty;
+
+	return fnode;
+}
+
+static int isatty(fs_node_t * node) {
+	return node && (node->ioctl == ioctl_pty_master || node->ioctl == ioctl_pty_slave);
+}
+
+static ssize_t readlink_dev_tty(fs_node_t * node, char * buf, size_t size) {
+	pty_t * pty = this_core->current_process->process->pty;
+
+
+	char tmp[100];
+	if (!pty) {
+		snprintf(tmp, 100, "/dev/null");
+	} else {
+		pty->fill_name(pty, 100, tmp);
+	}
+
+	size_t len = strlen(tmp);
+	if (size < len) len = size;
+	memcpy(buf, tmp, len);
+	return len;
+}
+
+static ssize_t get_size_dev_tty(fs_node_t * node) {
+	pty_t * pty = this_core->current_process->process->pty;
+	if (!pty) return strlen("/dev/null");
+	return pty->fill_name(pty, 0, NULL);
+}
+
+static fs_node_t * create_dev_tty(void) {
+	fs_node_t * fnode = malloc(sizeof(fs_node_t));
+	memset(fnode, 0x00, sizeof(fs_node_t));
+	fnode->inode = 0;
+	strcpy(fnode->name, "tty");
+	fnode->mask = 0777;
+	fnode->uid  = 0;
+	fnode->gid  = 0;
+	fnode->flags   = FS_FILE | FS_SYMLINK;
+	fnode->readlink = readlink_dev_tty;
+	fnode->length  = 99;
+	fnode->nlink   = 1;
+	fnode->ctime   = now();
+	fnode->mtime   = now();
+	fnode->atime   = now();
+	fnode->get_size = get_size_dev_tty;
+	return fnode;
+}
+
+static int readdir_pty(fs_node_t *node, unsigned long index, struct dirent * out) {
+	if (index == 0) {
+		memset(out, 0x00, sizeof(struct dirent));
+		out->d_ino = 0;
+		strcpy(out->d_name, ".");
+		return 1;
+	}
+
+	if (index == 1) {
+		memset(out, 0x00, sizeof(struct dirent));
+		out->d_ino = 0;
+		strcpy(out->d_name, "..");
+		return 1;
+	}
+
+	index -= 2;
+
+	pty_t * out_pty = NULL;
+	list_t * values = hashmap_values(_pty_index);
+	foreach(node, values) {
+		if (index == 0) {
+			out_pty = node->value;
+			break;
+		}
+		index--;
+	}
+	list_free(values);
+
+	if (out_pty) {
+		memset(out, 0x00, sizeof(struct dirent));
+		out->d_ino = out_pty->name;
+		out->d_name[0] = '\0';
+		snprintf(out->d_name, 100, "%zd", out_pty->name);
+		return 1;
+	}
+	return 0;
+}
+
+static fs_node_t * finddir_pty(fs_node_t * node, const char * name) {
+	if (!name) return NULL;
+	if (strlen(name) < 1) return NULL;
+
+	intptr_t c = 0;
+	for (intptr_t i = 0; name[i]; ++i) {
+		if (name[i] < '0' || name[i] > '9') {
+			return NULL;
+		}
+		c = c * 10 + name[i] - '0';
+	}
+
+	pty_t * _pty = hashmap_get(_pty_index, (void*)c);
+
+	if (!_pty) {
+		return NULL;
+	}
+
+	return _pty->slave;
+}
+
+static fs_node_t * create_pty_dir(void) {
+	fs_node_t * fnode = malloc(sizeof(fs_node_t));
+	memset(fnode, 0x00, sizeof(fs_node_t));
+	fnode->inode = 0;
+	strcpy(fnode->name, "pty");
+	fnode->mask = 0555;
+	fnode->uid  = 0;
+	fnode->gid  = 0;
+	fnode->flags   = FS_DIRECTORY;
+	fnode->read    = NULL;
+	fnode->write   = NULL;
+	fnode->open    = NULL;
+	fnode->close   = NULL;
+	fnode->readdir = readdir_pty;
+	fnode->finddir = finddir_pty;
+	fnode->nlink   = 1;
+	fnode->ctime   = now();
+	fnode->mtime   = now();
+	fnode->atime   = now();
+	return fnode;
+}
+
+void pty_install(void) {
+	_pty_index = hashmap_create_int(10);
+	_pty_dir   = create_pty_dir();
+	_dev_tty   = create_dev_tty();
+
+	vfs_mount("/dev/pts", _pty_dir, "pts", "");
+	vfs_mount("/dev/tty", _dev_tty, "devtty", "");
+}
+
+pty_t * pty_new(struct winsize * size, int index) {
+
+	if (!_pty_index) {
+		pty_install();
+	}
+
+	pty_t * pty = malloc(sizeof(pty_t));
+
+	spin_init(pty->teardown);
+	pty->master_closed = 0;
+	pty->slave_closed = 0;
+
+	pty->next_is_verbatim = 0;
+
+	/* stdin linkage; characters from terminal → PTY slave */
+	pty->in  = ring_buffer_create(TTY_BUFFER_SIZE);
+	pty->out = ring_buffer_create(TTY_BUFFER_SIZE);
+
+	/* Master endpoint - writes go to stdin, reads come from stdout */
+	pty->master = pty_master_create(pty);
+
+	/* Slave endpoint, reads come from stdin, writes go to stdout */
+	pty->slave  = pty_slave_create(pty);
+
+	/* tty name */
+	pty->name      = index;
+	pty->fill_name = tty_fill_name;
+
+	pty->write_in = pty_write_in;
+	pty->write_out = pty_write_out;
+
+	if (index) {
+		hashmap_set(_pty_index, (void*)pty->name, pty);
+	}
+
+	if (size) {
+		memcpy(&pty->size, size, sizeof(struct winsize));
+	} else {
+		/* Sane defaults */
+		pty->size.ws_row = 25;
+		pty->size.ws_col = 80;
+	}
+
+	/* Controlling and foreground processes are set to 0 by default */
+	pty->ct_proc = 0;
+	pty->fg_proc = 0;
+
+	pty->tios.c_iflag = ICRNL | BRKINT;
+	pty->tios.c_oflag = ONLCR | OPOST;
+	pty->tios.c_lflag = ECHO | ECHOE | ECHOK | ICANON | ISIG | IEXTEN | ECHOCTL;
+	pty->tios.c_cflag = CREAD | CS8 | B38400;
+	pty->tios.c_cc[VEOF]   =  4; /* ^D */
+	pty->tios.c_cc[VEOL]   =  0; /* Not set */
+	pty->tios.c_cc[VERASE] = 0x7f; /* ^? */
+	pty->tios.c_cc[VINTR]  =  3; /* ^C */
+	pty->tios.c_cc[VKILL]  = 21; /* ^U */
+	pty->tios.c_cc[VMIN]   =  1;
+	pty->tios.c_cc[VQUIT]  = 28; /* ^\ */
+	pty->tios.c_cc[VSTART] = 17; /* ^Q */
+	pty->tios.c_cc[VSTOP]  = 19; /* ^S */
+	pty->tios.c_cc[VSUSP] = 26; /* ^Z */
+	pty->tios.c_cc[VTIME]  =  0;
+	pty->tios.c_cc[VLNEXT] = 22; /* ^V */
+	pty->tios.c_cc[VWERASE] = 23; /* ^W */
+
+	pty->canon_buffer  = malloc(TTY_BUFFER_SIZE);
+	pty->canon_bufsize = TTY_BUFFER_SIZE-2;
+	pty->canon_buflen  = 0;
+
+	return pty;
+}
+
+int pty_create(void *size, fs_node_t ** fs_master, fs_node_t ** fs_slave) {
+	pty_t * pty = pty_new(size, ++_pty_counter);
+
+	*fs_master = pty->master;
+	*fs_slave  = pty->slave;
+
+	return 0;
+}

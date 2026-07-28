@@ -1,0 +1,77 @@
+ARCH=aarch64
+
+ARCH_KERNEL_CFLAGS = -z max-page-size=0x1000 -nostdlib -mgeneral-regs-only -mno-outline-atomics -ffixed-x18 --sysroot=base
+ARCH_KERNEL_LINK_FLAGS =  -Wl,-static,-pie,--no-dynamic-linker,-z,notext,-E
+ARCH_USER_CFLAGS = -Wno-psabi --sysroot=base -z max-page-size=0x1000 
+
+TARGET=aarch64-unknown-toaru
+
+all: system
+system: misaka-kernel ramdisk.igz bootstub kernel8.img | $(TOOLCHAIN)/local/bin/kuroko
+
+BOOTSTUB_OBJS  = $(patsubst %.c,%.o,$(wildcard kernel/arch/aarch64/bootstub/*.c))
+BOOTSTUB_OBJS += $(patsubst %.S,%.o,$(wildcard kernel/arch/aarch64/bootstub/*.S))
+BOOTSTUB_OBJS += kernel/misc/kprintf.o kernel/misc/string.o
+
+bootstub: ${BOOTSTUB_OBJS} kernel/arch/aarch64/bootstub/link.ld
+	${CC} -g -T kernel/arch/aarch64/bootstub/link.ld ${KERNEL_CFLAGS} -o $@ ${BOOTSTUB_OBJS}
+
+
+RPI400_OBJS  = $(patsubst %.c,%.o,$(wildcard kernel/arch/aarch64/rpi400/*.c))
+RPI400_OBJS += $(patsubst %.S,%.o,$(wildcard kernel/arch/aarch64/rpi400/*.S))
+RPI400_OBJS += kernel/misc/kprintf.o kernel/misc/string.o
+
+kernel/arch/aarch64/rpi400/start.o: misaka-kernel ramdisk.igz
+kernel8.img: ${RPI400_OBJS} kernel/arch/aarch64/rpi400/link.ld
+	${CC} -g -T kernel/arch/aarch64/rpi400/link.ld ${KERNEL_CFLAGS} -o $@.elf ${RPI400_OBJS}
+	${OC} $@.elf -O binary $@
+
+QEMU = qemu-system-aarch64
+
+EMU_MACH = virt
+EMU_CPU  = cortex-a72
+SMP ?= 4
+RAM ?= 4G
+
+EMU_ARGS  = -M $(EMU_MACH)
+EMU_ARGS += -m $(RAM)
+EMU_ARGS += -smp $(SMP)
+EMU_ARGS += -cpu $(EMU_CPU)
+EMU_ARGS += -no-reboot
+EMU_ARGS += -serial mon:stdio
+EMU_ARGS += -device ramfb
+EMU_ARGS += -device virtio-tablet-pci    # Mouse with absolute positioning
+EMU_ARGS += -device virtio-keyboard-pci  # Keyboard
+EMU_ARGS += -device AC97
+EMU_ARGS += -d guest_errors
+EMU_ARGS += -net user
+EMU_ARGS += -netdev hubport,id=u1,hubid=0, -device e1000e,netdev=u1
+EMU_ARGS += -name "RazionOS 0.1 Alpha ${ARCH}"
+
+EMU_RAMDISK = -fw_cfg name=opt/org.toaruos.initrd,file=ramdisk.igz
+EMU_KERNEL  = -fw_cfg name=opt/org.toaruos.kernel,file=misaka-kernel
+
+run: system
+	${QEMU} ${EMU_ARGS} -kernel bootstub  -append "root=/dev/ram0 migrate start=live-session ramfb vid=preset" ${EMU_RAMDISK} ${EMU_KERNEL}
+
+hvf: EMU_CPU = host -accel hvf
+hvf: run
+
+vga: system
+	${QEMU} ${EMU_ARGS} -kernel bootstub  -append "root=/dev/ram0 migrate start=--vga emulvga ramfb vid=preset" ${EMU_RAMDISK} ${EMU_KERNEL}
+
+vga-hvf: EMU_CPU = host -accel hvf
+vga-hvf: vga
+
+shell: system
+	@${QEMU} -M ${EMU_MACH} -m ${RAM} -smp ${SMP} -cpu ${EMU_CPU} -no-reboot -display none -serial mon:stdio -d guest_errors \
+		-net user -netdev hubport,id=u1,hubid=0, -device e1000e,netdev=u1 \
+		-name "RazionOS 0.1 Alpha ${ARCH}" -kernel bootstub \
+		-append "root=/dev/ram0 migrate start=--headless" ${EMU_RAMDISK} ${EMU_KERNEL} \
+		-fw_cfg name=opt/org.toaruos.gettyargs,string="-a local /dev/ttyS0 115200 ${TERM}"
+
+shell-hvf: EMU_CPU = host -accel hvf
+shell-hvf: shell
+
+debug: system
+	${QEMU} ${EMU_ARGS} -kernel bootstub  -append "root=/dev/ram0 migrate start=live-session vid=auto" ${EMU_RAMDISK} ${EMU_KERNEL} -d int 2>&1

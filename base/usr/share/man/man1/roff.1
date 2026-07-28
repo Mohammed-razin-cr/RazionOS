@@ -1,0 +1,216 @@
+.TH ROFF 1 "March, 2026"
+
+.SH NAME
+\fBroff\fP \- terrible, hacked\-together RUNOFF implementation
+
+.SH SYNOPSIS
+\fBroff\fP [\fB\-W\fP \fIwidth\fP] [\fB\-S\fP \fIsection\fP] [\fB\-E\fP] [\fB\-P\fP] \fIfile\fP...
+.br
+\fBroff\fP \fB--help\fP
+
+.SH DESCRIPTION
+\fIroff\fP is a terrible, no-good, very-bad, horrendously incomplete implementation
+of the \fIRUNOFF\fP text formatter.
+.PP
+This \fIroff\fP was made entirely to process \fIman\fP pages like this one, and
+probably won't work with ones that didn't come with ToaruOS.
+
+.SS Options
+Note that the options accepted by this \fBroff\fP are not related to options that
+may be supported by other similar tools.
+
+.TP
+.B \-W \fIwidth\fP
+Instead of formatting the output for the width of the terminal, as is the default,
+the output will be formatted for a page width of \fIwidth\fP columns.
+
+.TP
+.B \-S \fIsection\fP
+Print only the contents of \fIsection\fP.
+Other output will be quietly written to \fB/dev/null\fP.
+\fIsection\fP is matched in a case\-sensitive manner.
+The output when using this option when used with the \fBNAME\fP section may be suitable
+for piping to
+.IR grep (1)
+to search the short descriptions of manual pages.
+
+.TP
+.B \-E
+Write error messages to the standard error, rather than the standard output.
+This option is enabled by default when \fB\-S\fP is used.
+
+.TP
+.B \-P
+Disable the output of escape sequences to modify the font.
+All output will be plain text.
+
+.TP
+.B \-I \fIspaces\fP
+Set the indentation step to \fIspaces\fP columns.
+The default is 7.
+Setting the indentation step to 0 will cause tagged paragraphs to always
+be merged, and also result in section titles being merged.
+
+.SH BUGS
+Tons.
+.PP
+Various macros are not quite correct. Lots of escape sequences are missing.
+Tables are not properly supported.
+
+.SH SYNTAX
+This \fIroff\fP supports a hacked-together set of macros based on what was used in
+.IR nyancat (1)
+and
+.IR less (1)
+(even though we don't have that ported).
+
+.SH MACROS
+Lines starting with a \fB.\fP or, alternatively, a \fB'\fP, introduce macros.
+.TP
+.B .\e"
+A comment. The line will be ignored.
+.TP
+.B .TH \fItopic\fP \fIsection\fP [\fIfooter-middle\fP] [\fIfooter-left\fP] [\fIheader-middle\fP]
+Configure the header and footer of the page.
+.sp
+The \fItopic\fP is the name of this manual, generally the same as the filename prefix, but for
+applications it is traditionally capitalized.
+.sp
+The \fIsection\fP is a numeric section number, 1 through 9, or an alternative string that will
+be shown in its place; \fBn\fP is sometimes used by some systems.
+.sp
+The \fItopic\fP and \fIsection\fP are combined, with the \fItopic\fP underlined, and shown in
+the upper left, upper right, and lower right of the output.
+.sp
+The \fIfooter-middle\fP is usually an authorship date and will be shown in the middle of the
+bottom of the output, if present.
+.sp
+The \fIfooter-left\fP appears at the left of the bottom of the output, if present, but is
+usually not included in manual pages.
+.sp
+The \fIheader-middle\fP, if present, overrides the descriptive name of the \fIsection\fP to
+be displayed at middle of the top of the output.
+.sp
+If the \fIsection\fP is a numeric digit from 0 to 9, and \fIheader-middle\fP is not provided,
+the section title will be displayed at the top of the output. Otherwise, \fIsection\fP itself
+is displayed.
+.sp
+ 1: General Commands Manual
+ 2: System Calls Manual
+ 3: Library Function Names
+ 4: Special Files
+ 5: File Formats
+ 6: Games
+ 7: Miscellaneous
+ 8: System Administration Manual
+ 9: Kernel Programming Manual
+.TP
+.B .SH \fItitle\fP
+Displays a section title. Section titles are traditionally capitalized.
+.TP
+.B .PP
+Regular paragraph break. Sets up standard indentation.
+.TP
+.B .IP
+Indented paragraph. The paragraph is indented more. I'm pretty sure this is the same as \fB.TP\fP?
+.TP
+.B .TP
+Tagged paragraph. The next line will be indented a bit, and then lines after it will be indented more,
+I guess. These are all \fB.TP\fP paragraphs, for reference, so they're good for options and definitions.
+If the first line and the second line can be placed next to each other, they will be.
+.TP
+.B .br
+Line break. Forces a line feed.
+.TP
+.B .B
+Bold text. The rest of the line will be bold.
+.TP
+.B .I
+Underlined text. Technically, this is supposed to be \fIitalic\fP text, but literally everyone treats
+it as underlined instead. There's no standard ROFF thing for actual italic text, which is a shame.
+.TP
+.B .IR
+Do one word with the ita\-er, I mean, underlined font, then switch back to the regular font.
+This gets used in some man pages to print the names of manpages, like \fB.IR man (1)\fP or whatever.
+.TP
+.B .BR
+Similar to the above, except with bold instead of underlined. I don't know what you'd want to use this for.
+.TP
+.B .sp
+Insert a vertical space.
+.TP
+.B .RS
+Start a section that has extra indentation. This extra indentation continues until a \fB.RE\fP. This is
+supposedly used for block quotes, but it seems to mostly get used for very nested explanations.
+.TP
+.B .RE
+End a "blockquote" section. Restore the normal indentation level.
+.TP
+.B .nh .hy
+These are ignored for compatibility, but they're supposed to toggle hyphenation.
+.TP
+.B .nf .fi
+Between these macros, line feeds are taken literally. There's probably some other stuff
+I'm supposed to be doing that I'm not, but whatever.
+.TP
+.B .TS .TE
+These are supposed to introduce tables but just treat them the same as \fB.nf/.fi\fP.
+
+.SH FONT SELECTION
+You can use the various macros like \fB.B\fP above to select fonts, but the \fB\\f\fP escape
+is a lot more flexible. You can use it to select fonts like this:
+.TP
+.B \efP
+Reset the font to the previous one. There is only one level to the stack, so choose wisely.
+.TP
+.B \efR
+"Roman" \- the default font.
+.TP
+.B \efB
+Bold.
+.TP
+.B \efI
+Supposed to be "italic", but as we all learned earlier it's actually underlined.
+.TP
+.B \ef(BI
+Bold and italic together.
+
+.SH OTHER ESCAPES
+.TP
+.B \ee
+Prints a literal backslash. \e
+.TP
+.B \e(ha
+Prints a caret. \(ha
+.TP
+.B \e(ti
+Prints a tilde. \(ti
+.TP
+.B \e(aq
+Prints a single quote. \(aq
+.TP
+.B \e(dq
+Prints a double quote. \(dq
+.TP
+.B \e(bu
+Prints a list bullet (U+2022). \(bu
+.sp
+Useful for making lists like this:
+ \(bu Apples
+ \(bu Bananas
+ \(bu Oranges
+.TP
+.B \e"
+Comment. The rest of the line will be ignored. \" If you're reading this manual's source, you can see an example of this here.
+
+.SH SEE ALSO
+.BR man (1),
+.BR more (1)
+
+.SH HOMEPAGE
+.PP
+.B ToaruOS:
+https://toaruos.org/
+
+.SH AUTHOR
+This \fIroff\fP was written by K. Lange <klange@toaruos.org>.

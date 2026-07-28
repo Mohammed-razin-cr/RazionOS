@@ -1,0 +1,961 @@
+/**
+ * @brief A rudimentary implementation of some parts of ROFF.
+ *
+ * This is really just intended to read our own man pages, so it
+ * only supports functionality that was used in the manpage
+ * written for the 'nyancat' utility. It was also tested and
+ * expanded based on the manpage for 'less'.
+ *
+ * @copyright
+ * This file is part of ToaruOS and is released under the terms
+ * of the NCSA / University of Illinois License - see LICENSE.md
+ * Copyright (C) 2026 K. Lange
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <termios.h>
+#include <unistd.h>
+#include <string.h>
+#include <ctype.h>
+#include <errno.h>
+#include <sys/ioctl.h>
+
+static int DEFAULT_INDENTATION = 7;
+static int MARGIN_SPACE = 5;
+static struct winsize w;
+
+static char * only_section = NULL;    /* Global option to print a specific section's contents. */
+static FILE * initial_output = NULL;  /* Where to write output normally; usually stdout, but might be /dev/null if we only want a single section. */
+static FILE * true_output = NULL;     /* Where to write output when we actually want to print. Probably stdout. */
+static FILE * error_output = NULL;    /* Where to write error messages; stdout in most cases when we want them visible in a pager. */
+static int plain_text = 0;            /* Whether to skip output of font escapes. */
+
+struct RoffContext {
+	char * topic_title;          /* Storage for the current page title, to be displayed in the footer. */
+	char * topic_section;        /* Storage for the current section title, to be displayed in the footer. */
+	char * topic_date;           /* Storage for the current date string, to be displayed in the footer. */
+	int current_x;               /* Display cursor X offset. */
+	int indent;                  /* How much we should indent lines before printing. */
+	int next_indent;             /* The level of indentation we should switch to after finishing the current line. */
+	int extra_indent;            /* An extra amount of indentation we should add to the above values when we see a new paragraph macro. */
+	int printing_table;          /* Whether we should handle whitespace more directly. */
+	int squish_line;             /* Whether we should try to squish this line into the next one, eg. for a .TP macro. */
+	unsigned int previous_font;  /* The previously set font to act as a one-level undo stack. */
+	unsigned int current_font;   /* The current font, to be set once we start printing. */
+	char * topic_footer;         /* Extracted footer string from TH */
+	char * topic_header;         /* Extracted header string from TH */
+	int padded;                  /* State flag to indicate if we've already printed vertical padding. */
+	int just_did_re;             /* Flag to indicate whether we just processed an RE to fix indentation if we then start an RS */
+	FILE * output;               /* Where we're going to write. Can change as we process the document. */
+	FILE * error_output;         /* Where we write errors, as this can be configured. */
+	FILE * next_output;          /* When next_indent is set and we switch indents, also switches outputs. */
+	unsigned int active_font;    /* Font we think we have the terminal set for. */
+};
+
+
+/**
+ * @brief Convert a (string) section number into a section description.
+ *
+ * If the section isn't a single digit, it will be returned directly.
+ */
+static char * interpret_section(char * section) {
+	if (!section) return "Unknown";
+	if (strlen(section) == 1 && isdigit(*section)) {
+		switch (atoi(section)) {
+			case 1: return "General Commands Manual";
+			case 2: return "System Calls Manual";
+			case 3: return "Library Functions Manual";
+			case 4: return "Special Files";
+			case 5: return "File Formats";
+			case 6: return "Games";
+			case 7: return "Miscellaneous";
+			case 8: return "System Administration Manual";
+			case 9: return "Kernel Programming Manual";
+			case 0: return "Section Zero";
+		}
+	}
+	return section; /* Must be custom. */
+}
+
+/**
+ * @brief Print a formatted title and section number.
+ *
+ * Eg. foo(1) where 'foo' is underlined.
+ */
+static void formatted_title_and_section(struct RoffContext * ctx, char * title, char * section) {
+	if (!title || !section) {
+		fprintf(ctx->output, "??");
+		return;
+	}
+	fprintf(ctx->output, "%s%s%s(%s)",
+		plain_text ? "" : "\033[4m",
+		title,
+		plain_text ? "" : "\033[24m",
+		section
+	);
+}
+
+/**
+ * @brief Format and display the title of a page, at the top of the screen.
+ *
+ * The title and section are displayed in the upper left and right, and the
+ * section description is shown in the top center.
+ */
+static void format_title(struct RoffContext * ctx) {
+
+	char * title = ctx->topic_title;
+	char * section = ctx->topic_section;
+
+	/* XXX Should use display width, but too lazy. */
+	int title_len = title ? strlen(title) : 0;
+	int section_len = section ? strlen(section) : 0;
+	char * section_name = ctx->topic_header ? ctx->topic_header : interpret_section(section);
+	int section_name_len = strlen(section_name);
+
+	int avail = w.ws_col - 1; /* A gutter is fine. */
+
+	int space_used = (title_len + section_len + 2) * 2 + section_name_len;
+	if (avail < space_used) {
+		/* Print a short form and hope it works */
+		formatted_title_and_section(ctx, title, section);
+		fprintf(ctx->output, "\n");
+		return;
+	}
+
+	int space_left = (avail - space_used) / 2;
+	int space_right = avail - space_used - space_left;
+
+	formatted_title_and_section(ctx, title, section);
+	for (int i = 0; i < space_left; ++i) fprintf(ctx->output, " ");
+	fprintf(ctx->output, "%s", section_name);
+	for (int i = 0; i < space_right; ++i) fprintf(ctx->output, " ");
+	formatted_title_and_section(ctx, title, section);
+	fprintf(ctx->output, "\n\n");
+	ctx->padded = 1;
+}
+
+/**
+ * @brief Fromat and display the footer of a page.
+ *
+ * The "date" is shown in the center, and the title and section are displayed
+ * in the lower right.
+ */
+static void format_footer(struct RoffContext * ctx) {
+	int title_len = ctx->topic_title ? strlen(ctx->topic_title) : 0;
+	int section_len = ctx->topic_section ? strlen(ctx->topic_section) : 0;
+	int date_len = ctx->topic_date ? strlen(ctx->topic_date) : 0;
+	int footer_len = ctx->topic_footer ? strlen(ctx->topic_footer) : 0;
+
+	int avail = w.ws_col - 1; /* A gutter is fine. */
+	int space_used = title_len + section_len + 2 + date_len + footer_len;
+
+	int space_left = (avail - date_len) / 2 - footer_len;
+	int space_right = avail - space_used - space_left;
+
+	fprintf(ctx->output, "%s", ctx->topic_footer ? ctx->topic_footer : "");
+	for (int i = 0; i < space_left; ++i) fprintf(ctx->output, " ");
+	fprintf(ctx->output, "%s", ctx->topic_date ? ctx->topic_date : "");
+	for (int i = 0; i < space_right; ++i) fprintf(ctx->output, " ");
+	formatted_title_and_section(ctx, ctx->topic_title,ctx->topic_section);
+	fprintf(ctx->output, "\n");
+}
+
+/**
+ * @brief Determine how big an escape sequence is.
+ *
+ * Use this to eat escape sequences from the input when calculating the display width
+ * of a word. *len is increased with the number displayed characters, and the total
+ * number of input characters processed by the escape is returned.
+ *
+ * For example, \fI takes three input characters but displays none, and \e takes two
+ * input characters and displays one.
+ */
+static int skip_escape(char *x, size_t *len) {
+	switch (x[1]) {
+		/* Font selection supports both single and multi-character options */
+		case 'f':
+			if (x[2] == '(') {
+				if (x[3] == 0) return 3;
+				if (x[4] == 0) return 4;
+				return 5;
+			} else if (x[2] == 0) {
+				return 2;
+			}
+			return 3;
+
+		/* Comment */
+		case '"': {
+			char *c = x;
+			while (*c) c++;
+			return c - x;
+		}
+
+		/* "Italic correction */
+		case ',':
+		case '/':
+			return 2;
+
+		case '?':
+			return 2;
+
+		/* Special characters are generally one character, but maybe
+		 * some of them will be wider later. */
+		case '(':
+			(*len)++;
+			if (!x[2]) return 2;
+			if (!x[3]) return 3;
+			return 4;
+
+		/* Assume other escapes print a single character */
+		default:
+			(*len)++;
+			return 2;
+	}
+}
+
+#define PAIR(a,b) (((unsigned int)a << 8) | (unsigned int)b)
+static void real_activate_font(struct RoffContext * ctx, unsigned int desired_font) {
+	if (plain_text) return;
+	if (ctx->active_font == desired_font) return;
+	int want = (desired_font == 'B' ? 1 : 0) | (desired_font == 'I' ? 2 : 0) | (desired_font == PAIR('B','I') ? 3 : 0);
+	int have = (ctx->active_font == 'B' ? 1 : 0) | (ctx->active_font == 'I' ? 2 : 0) | (ctx->active_font == PAIR('B','I') ? 3 : 0);
+	int changed = want ^ have;
+	if (changed) {
+		fprintf(ctx->output, "\033[%s%s%sm",
+			(changed & 1) ? ((want & 1) ? "1" : "22") : "",
+			(changed == 3) ? ";" : "",
+			(changed & 2) ? ((want & 2) ? "4" : "24") : "");
+	}
+	ctx->active_font = desired_font;
+}
+
+/**
+ * @brief If the cursor is not at the start of a line, print a line feed.
+ *
+ * @returns 1 if a line feed was printed. Many callers want to then print another one in this case.
+ */
+static int flush_line(struct RoffContext * ctx, int for_vertical_padding) {
+	if (ctx->current_x != 0) {
+		ctx->current_x = 0;
+		real_activate_font(ctx, 0);
+		fprintf(ctx->output, "\n%s",
+			for_vertical_padding ? "\n" : "");
+		ctx->padded = for_vertical_padding;
+		return 1;
+	} else if (for_vertical_padding && !ctx->padded) {
+		real_activate_font(ctx, 0);
+		fprintf(ctx->output, "\n");
+		ctx->padded = 1;
+		return 1;
+	}
+
+	ctx->padded = for_vertical_padding;
+	return 0;
+}
+
+/**
+ * @brief Switch the active font.
+ *
+ * If @c font is 'P', the previous font is retrieved from the undo stack.
+ * Otherwise, the current font is stored in the undo stack and the new
+ * font is set as the current font.
+ *
+ * This does not actually change the display font on the terminal; that
+ * must be done with @c activate_font() when you are ready to print.
+ */
+static void switch_font(struct RoffContext * ctx, unsigned int font) {
+	if (font == 'P') {
+		ctx->current_font = ctx->previous_font;
+	} else {
+		ctx->previous_font = ctx->current_font;
+		ctx->current_font = font;
+	}
+
+	/* Aliases first */
+	switch (ctx->current_font) {
+		case '1': ctx->current_font = 'R'; break;
+		case '2': ctx->current_font = 'I'; break;
+		case '3': ctx->current_font = 'B'; break;
+		case '4': ctx->current_font = PAIR('B','I'); break;
+		case PAIR('C','B'): ctx->current_font = 'B'; break;
+		case PAIR('C','I'): ctx->current_font = 'I'; break;
+		case PAIR('C','R'): ctx->current_font = 'R'; break;
+		case PAIR('C','W'): ctx->current_font = 'R'; break;
+	}
+}
+
+/**
+ * @brief Emit the terminal sequence necessary to activate the current font.
+ *
+ * Prints the escape sequence associated with the current font. Run this
+ * before you start printing, but after you've skipped over indentation,
+ * as users generally don't want to see a bunch of underlines at the start
+ * of a line.
+ */
+static void activate_font(struct RoffContext * ctx) {
+	real_activate_font(ctx, ctx->current_font);
+}
+
+/**
+ * @brief Process an escape sequence.
+ *
+ * Actually handle an escape sequence. Switch fonts, print special characters,
+ * and so on. As with @c skip_escape, returns the number of input characters
+ * handled by the escape.
+ *
+ * This should always print as many characters (or, really, the width of those
+ * characters, when we get around to it) as @c skip_escape said the escape
+ * should display when it updated @c len.
+ */
+static int do_escape(struct RoffContext * ctx, char *x) {
+	switch (x[1]) {
+		case 'f': /* Font selection takes a few more characters */
+			if (x[2] == 0) return 2;
+			if (x[2] == '(') {
+				if (x[3] == 0) return 3;
+				if (x[4] == 0) return 4;
+				switch_font(ctx, PAIR(x[3],x[4]));
+			} else {
+				switch_font(ctx, (unsigned int)x[2]);
+			}
+			activate_font(ctx);
+			return x[2] == '(' ? 5 : 3;
+		/* Comment */
+		case '"': {
+			char *c = x;
+			while (*c) c++;
+			return c - x;
+		}
+		case 'e':
+			fputc('\\', ctx->output);
+			return 2;
+		case ',': /* "left and right italic correction"; ignored. */
+		case '/':
+		case '&': /* "Zero width space, which we just don't print. */
+			return 2;
+		case '(':
+			if (!x[2]) return 2;
+			if (!x[3]) return 3;
+			switch (PAIR(x[2],x[3])) {
+				case PAIR('h','a'): fputc('^', ctx->output); break;
+				case PAIR('b','u'): fprintf(ctx->output, "•"); break;
+				case PAIR('t','i'): fputc('~', ctx->output); break;
+				case PAIR('a','q'): fputc('\'', ctx->output); break;
+				case PAIR('d','q'): fputc('"', ctx->output); break;
+				case PAIR('l','q'): fprintf(ctx->output, "“"); break; /* Left double quote */
+				case PAIR('r','q'): fprintf(ctx->output, "”"); break; /* Right double quote */
+				case PAIR('o','q'): fprintf(ctx->output, "‘"); break; /* Open single quote */
+				case PAIR('c','q'): fprintf(ctx->output, "’"); break; /* Close single quote */
+				case PAIR('l','a'): fprintf(ctx->output, "⟨"); break; /* Left angle bracket */
+				case PAIR('r','a'): fprintf(ctx->output, "⟩"); break; /* Right angle bracket */
+				case PAIR('e','n'): fprintf(ctx->output, "–"); break; /* en-dash */
+				default: fputc('?', ctx->output); break;
+			}
+			return 4;
+		default:
+			fputc(x[1], ctx->output);
+			return 2;
+	}
+}
+
+static int is_tab_or_space(char c) {
+	return (c == ' ' || c == '\t');
+}
+
+/**
+ * @brief Helper to determine if a whole string is spaces.
+ *
+ * This should probably also handle tabs and maybe some other stuff,
+ * or at least just use @c isblank() but it's good enough for now.
+ */
+static int is_whitespace(char * c) {
+	while (*c && is_tab_or_space(*c)) c++;
+	if (*c && !is_tab_or_space(*c))  return 0;
+	return 1;
+}
+
+/**
+ * @brief Helper to print a set number of spaces.
+ *
+ * Mostly used to print indentation.
+ */
+static void print_spaces(struct RoffContext * ctx, int indent) {
+	for (int i = 0; i < indent; ++i) fputc(' ', ctx->output);
+}
+
+static void do_tab_or_space(struct RoffContext * ctx, char c) {
+	if (c == '\t') {
+		/* Is this the right tab stop? I have no idea! */
+		fputc(' ', ctx->output);
+		ctx->current_x += 1;
+		while ((ctx->current_x - ctx->indent) % 5) {
+			fputc(' ', ctx->output);
+			ctx->current_x += 1;
+		}
+	} else {
+		fputc(' ', ctx->output);
+		ctx->current_x += 1;
+	}
+}
+
+/**
+ * @brief Display a word and handle line wrapping.
+ *
+ * This is the core of the output formatting.
+ *
+ * Processes a word from the input text, handling escapes within it,
+ * and determines if it will fit on the current line, starting a new
+ * line if there is not enough space.
+ *
+ * In this roff, we don't handle justification or other advanced
+ * text layout, so this will always end up immediately printing words.
+ */
+static size_t process_word(struct RoffContext * ctx, char * c, int delimited) {
+	char * c_in = c;
+	char * last_word = c;
+	size_t last_len = 0;
+
+	/* Collect word */
+	while (*c && (ctx->printing_table || !is_tab_or_space(*c))) {
+		if (*c == '\\' && c[1]) {
+			c += skip_escape(c, &last_len);
+		} else {
+			last_len++;
+			c++;
+		}
+	}
+
+	/* Word was empty, done with line. */
+	if (!last_len) {
+		while (*c && is_tab_or_space(*c)) c++;
+		return c - c_in;
+	}
+
+	/* Word would wrap, continue to next line and print indentant. */
+	if (last_len + ctx->current_x > (size_t)w.ws_col - MARGIN_SPACE) {
+		flush_line(ctx,0);
+		print_spaces(ctx, ctx->indent);
+		ctx->current_x += ctx->indent;
+	} else if (ctx->current_x == 0) {
+		print_spaces(ctx, ctx->indent);
+		ctx->current_x += ctx->indent;
+	}
+
+	ctx->padded = 0;
+
+	activate_font(ctx);
+
+	/* Print the word */
+	char *x = last_word;
+	while (*x && x != c) {
+		if (*x == '\\' && x[1]) {
+			x += do_escape(ctx, x);
+		} else {
+			fputc(*x, ctx->output);
+			x++;
+		}
+	}
+	ctx->current_x += last_len;
+
+	if (!*c && !plain_text) real_activate_font(ctx, 0);
+
+	if (ctx->printing_table || delimited) {
+		int something = 0;
+		while (*c && is_tab_or_space(*c) && (size_t)ctx->current_x < (size_t)w.ws_col - MARGIN_SPACE) {
+			something = 1;
+			do_tab_or_space(ctx, *c);
+			c++;
+		}
+		if (delimited && !something) do_tab_or_space(ctx, ' ');
+	}
+
+	/* Advance through whitespace */
+	while (*c && is_tab_or_space(*c)) c++;
+
+	return c - c_in;
+}
+
+#define MAYBE_QUOTES() do { \
+	if (*c == '"' && line[len-1] == '"') { \
+		line[len-1] = '\0'; \
+		len--; \
+		c++; \
+	} \
+} while (0)
+
+static char * collect_arg(char * c, char **out) {
+	char * value = NULL;
+	*out = NULL;
+	while (*c && is_tab_or_space(*c)) c++;
+	if (*c) {
+
+		int quoted = 0;
+		if (*c == '"') {
+			c++;
+			quoted = 1;
+		}
+
+		value = c;
+
+		if (quoted) {
+			while (*c && *c != '"') c++;
+		} else {
+			while (*c && !is_tab_or_space(*c)) c++;
+		}
+		if (*c) *c++ = '\0';
+
+		/* Skip whitespace */
+		while (*c && is_tab_or_space(*c)) c++;
+	}
+
+	if (value) *out = strdup(value);
+
+	return c;
+}
+
+static size_t process_arg(struct RoffContext * ctx, char * c, int delimit_last) {
+	char * c_in = c;
+	char * arg = NULL;
+	c = collect_arg(c, &arg);
+
+	if (arg) {
+		char * ca = arg;
+
+		/* Preserve whitespace within arg */
+		int was_table = ctx->printing_table;
+		ctx->printing_table = 1;
+
+		while (*ca) {
+			ca += process_word(ctx, ca, 0);
+		}
+
+		ctx->printing_table = was_table;
+
+		free(arg);
+	}
+
+	if (delimit_last) {
+		fputc(' ', ctx->output);
+		ctx->current_x += 1;
+	}
+
+	return c - c_in;
+}
+
+/**
+ * @brief Format and display one file.
+ *
+ * This is the core of the macro processor.
+ *
+ * Reads lines from an input file, interprets lines with roff macros,
+ * and otherwise processes text for display with @c process_word.
+ *
+ * @returns 1 on error, 0 if the file was fully processed and displayed.
+ */
+static int do_file(char ** argv, int i) {
+	struct RoffContext ctx = {0};
+	ctx.output = initial_output;
+	ctx.error_output = error_output;
+
+	FILE * f = (!strcmp(argv[i],"-")) ? stdin : fopen(argv[i], "r");
+	if (!f) {
+		fprintf(ctx.error_output, "%s: %s: %s\n", argv[0], argv[i], strerror(errno));
+		return 1;
+	}
+
+	char * line = NULL;
+	size_t avail = 0;
+	ssize_t len;
+
+	ctx.previous_font = 'R';
+	ctx.current_font = 'R';
+
+	int ret = 0;
+
+	while ((len = getline(&line, &avail, f)) >= 0) {
+
+		/* Discard linefeed to make this simpler */
+		if (len && line[len-1] == '\n') {
+			line[len-1] = '\0';
+			len--;
+		}
+
+		if (*line == '\'') line[0] = '.'; /* single tick is an alias for . at the start of a line. */
+
+		/* Skip comment lines */
+		if (strstr(line, ".\\\"") == line) continue;
+
+		/* Also skip lines that are just the "control character" */
+		if (*line == '.' && is_whitespace(&line[1])) continue;
+
+		char * c = line;
+		int delimited = 1;
+		int force_padded = 0;
+
+		int just_did_re = ctx.just_did_re;
+		ctx.just_did_re = 0;
+
+		if (line[0] == '.') {
+			/* Macro directives */
+
+			if (strstr(line,".TH ") == line) {
+				if (ctx.topic_title) {
+					fprintf(ctx.error_output, "%s: %s: More than one .TH found.\n", argv[0], argv[i]);
+					ret = 1;
+					goto _cleanup;
+				}
+				/* Topic heading */
+				char * c = line + 4;
+				c = collect_arg(c, &ctx.topic_title);
+				c = collect_arg(c, &ctx.topic_section);
+				c = collect_arg(c, &ctx.topic_date);
+				c = collect_arg(c, &ctx.topic_footer);
+				c = collect_arg(c, &ctx.topic_header);
+
+				if (!only_section) format_title(&ctx);
+				continue;
+			} else if (strstr(line, ".SH ") == line) {
+				/* Section heading */
+				flush_line(&ctx, 1);
+				c = line + 4;
+				MAYBE_QUOTES();
+				if (only_section) {
+					if (!strcmp(c,only_section)) {
+						ctx.next_output = true_output;
+					} else {
+						ctx.next_output = NULL;
+						ctx.output = initial_output;
+					}
+				}
+				switch_font(&ctx,'B');
+				ctx.indent = 0;
+				ctx.extra_indent = 0;
+				ctx.next_indent = DEFAULT_INDENTATION;
+				ctx.squish_line = 0;
+				force_padded = 1;
+			} else if (strstr(line, ".SS ") == line) {
+				/* Sub-section heading */
+				flush_line(&ctx, 1);
+				c = line + 4;
+				MAYBE_QUOTES();
+				switch_font(&ctx,'B');
+				ctx.indent = 3;
+				ctx.extra_indent = 0;
+				ctx.next_indent = DEFAULT_INDENTATION;
+				ctx.squish_line = 0;
+				force_padded = 1;
+			} else if (strstr(line, ".PP") == line) {
+				/* Paragraph */
+				flush_line(&ctx, 1);
+				ctx.indent = ctx.extra_indent + DEFAULT_INDENTATION;
+				ctx.next_indent = 0;
+				continue;
+			} else if (strstr(line, ".TP") == line) {
+				/* Tagged paragraph */
+				flush_line(&ctx, 1);
+
+				/* Incorrectly support indentation hints */
+				int howmuch = DEFAULT_INDENTATION;
+				char * arg;
+				c = collect_arg(c + 3, &arg);
+				if (arg) {
+					howmuch = atoi(arg);
+					free(arg);
+				}
+				ctx.indent = ctx.extra_indent + DEFAULT_INDENTATION;
+				ctx.next_indent = ctx.extra_indent + DEFAULT_INDENTATION + howmuch;
+				ctx.squish_line = 1;
+				continue;
+			} else if (strstr(line, ".br") == line) {
+				/* Line break */
+				flush_line(&ctx, 0);
+				continue;
+			} else if (strstr(line, ".B ") == line) {
+				/* Bold */
+				switch_font(&ctx, 'B');
+				c = line + 3;
+				MAYBE_QUOTES();
+			} else if (strstr(line, ".I ") == line) {
+				/* Italic (actually underlined) */
+				switch_font(&ctx, 'I');
+				c = line + 3;
+				MAYBE_QUOTES();
+			} else if (strstr(line, ".IR ") == line) {
+				/* Italic (actually underlined), then Roman */
+				c = line + 4;
+				while (*c) {
+					switch_font(&ctx, 'I');
+					c += process_arg(&ctx, c, 0);
+					switch_font(&ctx, 'R');
+					c += process_arg(&ctx, c, 0);
+				}
+				print_spaces(&ctx, 1);
+				ctx.current_x++;
+				goto _processed_line;
+			} else if (strstr(line, ".BR ") == line) {
+				/* Bold, then Roman */
+				c = line + 4;
+				while (*c) {
+					switch_font(&ctx, 'B');
+					c += process_arg(&ctx, c, 0);
+					switch_font(&ctx, 'R');
+					c += process_arg(&ctx, c, 0);
+				}
+				print_spaces(&ctx, 1);
+				ctx.current_x++;
+				goto _processed_line;
+			} else if (strstr(line, ".RI ") == line) {
+				/* Roman, then underlined. */
+				c = line + 4;
+				while (*c) {
+					switch_font(&ctx, 'R');
+					c += process_arg(&ctx, c, 0);
+					switch_font(&ctx, 'I');
+					c += process_arg(&ctx, c, 0);
+				}
+				switch_font(&ctx, 'R'); /* Always switch back to Roman afterwards */
+				print_spaces(&ctx, 1);
+				ctx.current_x++;
+				goto _processed_line;
+			} else if (strstr(line, ".RB ") == line) {
+				/* Roman, then bold. */
+				c = line + 4;
+				while (*c) {
+					switch_font(&ctx, 'R');
+					c += process_arg(&ctx, c, 0);
+					switch_font(&ctx, 'B');
+					c += process_arg(&ctx, c, 0);
+				}
+				switch_font(&ctx, 'R'); /* Always switch back to Roman afterwards */
+				print_spaces(&ctx, 1);
+				ctx.current_x++;
+				goto _processed_line;
+			} else if (strstr(line, ".IP ") == line) {
+				/* Indented paragraph */
+				flush_line(&ctx, 1);
+				ctx.indent = ctx.extra_indent + DEFAULT_INDENTATION;
+				ctx.next_indent = ctx.extra_indent + DEFAULT_INDENTATION * 2;
+				c = line + 4;
+				MAYBE_QUOTES();
+				ctx.squish_line = 1;
+				force_padded = 1;
+			} else if (strstr(line, ".IP") == line) {
+				/* Indented paragraph but this line is empty */
+				flush_line(&ctx, 1);
+				ctx.indent = ctx.extra_indent + DEFAULT_INDENTATION;
+				ctx.next_indent = ctx.extra_indent + DEFAULT_INDENTATION;
+				c = line + 3;
+				ctx.squish_line = 1;
+			} else if (strstr(line, ".sp") == line) {
+				/* Vertical space */
+				flush_line(&ctx, 0);
+				fprintf(ctx.output, "\n");
+				ctx.padded = 1;
+				continue;
+			} else if (strstr(line, ".RS") == line) {
+				/* Block quote start */
+				ctx.extra_indent += DEFAULT_INDENTATION;
+				flush_line(&ctx, !ctx.padded && (ctx.indent == ctx.extra_indent + DEFAULT_INDENTATION || just_did_re));
+				ctx.indent = ctx.extra_indent + DEFAULT_INDENTATION;
+				ctx.next_indent = 0;
+				continue;
+			} else if (strstr(line, ".RE") == line) {
+				/* Block quote end */
+				ctx.extra_indent -= DEFAULT_INDENTATION;
+				ctx.indent = ctx.extra_indent + DEFAULT_INDENTATION;
+				ctx.next_indent = 0;
+				flush_line(&ctx, 0);
+				ctx.just_did_re = 1;
+				continue;
+			} else if (strstr(line, ".nh") == line) {
+				/* TODO disable hyphenation */
+				continue;
+			} else if (strstr(line, ".hy") == line) {
+				/* TODO reenable hyphenation */
+				continue;
+			} else if (strstr(line, ".nf") == line) {
+				/* Handle whitespace, including linebreaks, until .fi */
+				flush_line(&ctx, 0);
+				ctx.printing_table = 1;
+				continue;
+			} else if (strstr(line, ".fi") == line) {
+				/* End of raw whitespace handling */
+				flush_line(&ctx, 0);
+				ctx.printing_table = 0;
+				continue;
+			} else if (strstr(line, ".TS") == line) {
+				/* Table start (treated the same as .nf) */
+				flush_line(&ctx, 0);
+				ctx.printing_table = 1;
+				continue;
+			} else if (strstr(line, ".TE") == line) {
+				/* Table end (treated the same as .fi, but with an extra line break) */
+				flush_line(&ctx, 0);
+				fprintf(ctx.output, "\n");
+				ctx.padded = 1;
+				ctx.printing_table = 0;
+				continue;
+			} else {
+				fprintf(ctx.error_output, "%s: %s: Found an unrecognized directive on this line: %s\n",
+					argv[0], argv[i], line);
+				ret = 1;
+				goto _cleanup;
+			}
+		}
+
+		if (!*c && !ctx.printing_table) {
+			flush_line(&ctx, 1);
+		}
+
+		/* If whitespace appears at the start of the line, treat it as a line break
+		 * and display the literal whitespace */
+		if (is_tab_or_space(*c)) {
+			flush_line(&ctx, 0);
+			print_spaces(&ctx, ctx.indent);
+			ctx.current_x += ctx.indent;
+
+			while (is_tab_or_space(*c)) {
+				do_tab_or_space(&ctx, *c);
+				c++;
+			}
+		}
+
+		/* Print it! */
+		while (*c) {
+			c += process_word(&ctx, c, delimited);
+		}
+
+_processed_line:
+		if (!plain_text) real_activate_font(&ctx, 0);
+
+		/* When in one of the raw whitespace modes, treat the end of a line
+		 * as a forced line break. */
+		if (ctx.printing_table) {
+			fprintf(ctx.output, "\n");
+			ctx.current_x = 0;
+			ctx.padded = 0;
+			continue;
+		}
+
+		/* Should we always be resetting the font to Roman at the end of an input line?
+		 * Probably not, but it's worked so far... */
+		ctx.current_font = ctx.previous_font = 'R';
+
+		/* Handle macros that want to change indentation after handling one line. */
+		if (ctx.next_indent) {
+			ctx.indent = ctx.next_indent;
+			ctx.next_indent = 0;
+			if (ctx.squish_line && ctx.current_x < (ctx.indent + delimited)) {
+				ctx.squish_line = 0;
+				while (ctx.current_x < ctx.indent) {
+					fputc(' ', ctx.output);
+					ctx.current_x += 1;
+				}
+			} else {
+				flush_line(&ctx,0);
+			}
+			if (ctx.next_output) {
+				ctx.output = ctx.next_output;
+				ctx.next_output = NULL;
+			}
+		}
+
+		if (ctx.current_x) ctx.padded = 0;
+		if (force_padded) ctx.padded = 1;
+	}
+
+	/* End of file, print the footer. We made it! */
+	flush_line(&ctx, 1);
+	format_footer(&ctx);
+
+_cleanup:
+	if (ctx.topic_title) free(ctx.topic_title);
+	if (ctx.topic_section) free(ctx.topic_section);
+	if (ctx.topic_date) free(ctx.topic_date);
+
+	if (f != stdin) fclose(f);
+	free(line);
+	return ret;
+}
+
+static int usage(char * argv[]) {
+#define X_S "\033[3m"
+#define X_E "\033[0m"
+	fprintf(stderr,
+		"usage: %s [-W " X_S "width" X_E "] " X_S "FILE" X_E "...\n"
+		"\n"
+		"Parse a very limited subset of ROFF and format it for display on STDOUT, using\n"
+		"STDERR as the basis for sizing, suitable for passing to '|more -r'.\n"
+		"\n"
+		"If an unrecognized directive is found, processing will halt and an error will\n"
+		"be printed indicating the unhandled line.\n"
+		"\n"
+		"Options:\n"
+		"\n"
+		" -W " X_S "width   Format output for the given width, instead of using the" X_E "\n"
+		"            " X_S "width of the terminal." X_E "\n"
+		" -S " X_S "section Print only the contents of the given section. The section" X_E "\n"
+		"            " X_S "header will not be included. Name matching is case sensitive." X_E "\n"
+		" -E         " X_S "Print error messages about missing files or unknown directives" X_E "\n"
+		"            " X_S "to standard error, rather than standard output. With -S, this" X_E "\n"
+		"            " X_S "is the default behavior." X_E "\n"
+		" -P         " X_S "Do not output escape sequences to change fonts." X_E "\n"
+		" -I " X_S "spaces  Set the indentation step (default is 7)." X_E "\n"
+		" --help     " X_S "Show this help text." X_E "\n"
+		"\n", argv[0]);
+	return 1;
+}
+
+int main(int argc, char * argv[]) {
+	if (isatty(STDERR_FILENO)) ioctl(STDERR_FILENO, TIOCGWINSZ, &w);
+
+	/* Normally, we want to write to stdout */
+	initial_output = stdout;
+	true_output = stdout;
+	error_output = stdout; /* These are errors we want to show up in a pager */
+
+	int opt;
+	while ((opt = getopt(argc, argv, "?W:S:EPI:-:")) != -1) {
+		switch (opt) {
+			case 'W':
+				w.ws_col = atoi(optarg);
+				break;
+			case 'S':
+				only_section = optarg;
+				initial_output = fopen("/dev/null","w");
+				error_output = stderr;
+				break;
+			case 'E':
+				error_output = stderr;
+				break;
+			case 'P':
+				plain_text = 1;
+				break;
+			case 'I':
+				DEFAULT_INDENTATION = strtoul(optarg, NULL, 10);
+				break;
+			case '-':
+				if (!strcmp(optarg,"help")) {
+					usage(argv);
+					return 0;
+				}
+				fprintf(stderr, "%s: '--%s' is not a recognized long option.\n", argv[0], optarg);
+				/* fallthrough */
+			case '?':
+				return usage(argv);
+		}
+	}
+
+	if (optind == argc) {
+		fprintf(stderr, "%s: no files (see `%s --help` for usage)\n", argv[0], argv[0]);
+		return 1;
+	}
+
+	int ret = 0;
+
+	for (; optind < argc; optind++) {
+		ret |= do_file(argv, optind);
+	}
+
+	return ret;
+}

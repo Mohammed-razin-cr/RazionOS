@@ -1,0 +1,533 @@
+/**
+ * @file  apps/fetch.c
+ * @brief Obtain files over HTTP.
+ *
+ * @copyright
+ * This file is part of ToaruOS and is released under the terms
+ * of the NCSA / University of Illinois License - see LICENSE.md
+ * Copyright (C) 2015-2021 K. Lange
+ */
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <getopt.h>
+#include <time.h>
+#include <termios.h>
+#include <unistd.h>
+#include <sys/time.h>
+#include <sys/stat.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <errno.h>
+
+#include <toaru/hashmap.h>
+
+#define SIZE 512
+#define BOUNDARY "------ToaruOSFetchUploadBoundary"
+
+struct http_req {
+	char domain[SIZE];
+	char path[SIZE];
+	int port;
+	int ssl;
+};
+
+struct {
+	int show_headers;
+	const char * output_file;
+	const char * cookie;
+	FILE * out;
+	int prompt_password;
+	const char * upload_file;
+	char * password;
+	int show_progress;
+	size_t content_length;
+	size_t size;
+	struct timeval start;
+	int calculate_output;
+	int slow_upload;
+	int machine_readable;
+	int fail_fast;
+	char * label;
+	struct winsize ws;
+} fetch_options = {0};
+
+int parse_url(char * d, struct http_req * r) {
+	if (strstr(d, "http://") == d) {
+		d += strlen("http://");
+		r->port = 80;
+		r->ssl = 0;
+	} else if (strstr(d, "https://") == d) {
+		d += strlen("https://");
+		r->port = 443;
+		r->ssl = 1;
+	} else {
+		fprintf(stderr, "Unrecognized protocol: %s\n", d);
+		return 1;
+	}
+
+	char * s = strstr(d, "/");
+	if (!s) {
+		strcpy(r->domain, d);
+		strcpy(r->path, "");
+	} else {
+		*s = 0;
+		s++;
+		strcpy(r->domain, d);
+		strcpy(r->path, s);
+	}
+	if (strstr(r->domain,":")) {
+		char * port = strstr(r->domain,":");
+		*port = '\0';
+		port++;
+		r->port = atoi(port);
+	}
+
+	return 0;
+}
+
+#define BAR_WIDTH 20
+#define bar_perc "||||||||||||||||||||"
+#define bar_spac "                    "
+void print_progress(int force) {
+	static uint64_t last_size = 0;
+	if (!fetch_options.show_progress) return;
+	if (!force && (last_size + 102400 > fetch_options.size)) return;
+	last_size = fetch_options.size;
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	fprintf(stderr,"\033[?25l\033[G");
+	ssize_t written = 0;
+	if (fetch_options.label) {
+		written += fprintf(stderr, "%s ", fetch_options.label);
+	}
+	written += fprintf(stderr,"%6dkB",(int)fetch_options.size/1024);
+
+	char * time_remaining = NULL;
+
+	double timediff = (double)(now.tv_sec - fetch_options.start.tv_sec) + (double)(now.tv_usec - fetch_options.start.tv_usec)/1000000.0;
+	if (timediff > 0.0) {
+		double rate = (double)(fetch_options.size) / timediff;
+		double s = rate/(1024.0) * 8.0;
+		int use_mb = s > 1024.0;
+		int show_remaining = (!force && fetch_options.content_length);
+		int show_time = show_remaining ? (rate > 0.0) : 1;
+
+		double remaining = 0;
+		if (show_remaining && show_time) remaining = (double)(fetch_options.content_length - fetch_options.size) / rate;
+
+		if (show_time) {
+			written += asprintf(&time_remaining,
+				" %3.2f %cbps (%3.2f sec %s",
+				use_mb ? s / 1024.0 : s,
+				use_mb ? 'M' : 'K',
+				show_remaining ? remaining : timediff,
+				show_remaining ? "remaining)"
+				               : "elapsed)  ");
+		} else {
+			written += asprintf(&time_remaining,
+				" %3.2f %cbps",
+				use_mb ? s / 1024.0 : s,
+				use_mb ? 'M' : 'K');
+		}
+	}
+
+	if (fetch_options.content_length) {
+		written += fprintf(stderr," / %6dkB [", (int)fetch_options.content_length/1024);
+		int screen_width = fetch_options.ws.ws_col ? fetch_options.ws.ws_col : 80;
+		int bar_width = screen_width - written - 2; /* A little padding */
+		int percent = (fetch_options.size * bar_width) / (fetch_options.content_length);
+		int i = 0;
+		for (; i < percent; ++i) fprintf(stderr,"|");
+		for (; i < bar_width; ++i) fprintf(stderr," ");
+		fprintf(stderr, "]");
+	}
+
+	if (time_remaining) {
+		fprintf(stderr, "%s", time_remaining);
+		free(time_remaining);
+	}
+
+	fprintf(stderr,"\033[K\033[?25h");
+	fflush(stderr);
+}
+
+int usage(char * argv[]) {
+#define X_S "\033[3m"
+#define X_E "\033[0m"
+	fprintf(stderr,
+			"%s - download files over HTTP\n"
+			"\n"
+			"usage: %s [-hOvmpf?] [-c " X_S "cookie " X_E "] [-o " X_S "file" X_E "] [-u " X_S "file" X_E "] [-s " X_S "speed" X_E"] [-L " X_S "label" X_E "] " X_S "URL" X_E "\n"
+			"\n"
+			" -h     " X_S "show headers" X_E "\n"
+			" -O     " X_S "save the file based on the filename in the URL" X_E "\n"
+			" -v     " X_S "show progress" X_E "\n"
+			" -m     " X_S "machine readable output" X_E "\n"
+			" -p     " X_S "prompt for password" X_E "\n"
+			" -f     " X_S "fail if response is not 200" X_E "\n"
+			" -c ... " X_S "set cookies" X_E "\n"
+			" -o ... " X_S "save to the specified file" X_E "\n"
+			" -u ... " X_S "upload the specified file" X_E "\n"
+			" -s ... " X_S "specify the speed for uploading slowly" X_E "\n"
+			" -L ... " X_S "provide a label to show before the download progress" X_E "\n"
+			" -?     " X_S "show this help text" X_E "\n"
+			"\n", argv[0], argv[0]);
+	return 1;
+}
+
+int collect_password(char * password) {
+	fprintf(stdout, "Password for upload: ");
+	fflush(stdout);
+
+	/* Disable echo */
+	struct termios old, new;
+	tcgetattr(fileno(stdin), &old);
+	new = old;
+	new.c_lflag &= (~ECHO);
+	tcsetattr(fileno(stdin), TCSAFLUSH, &new);
+
+	fgets(password, 1024, stdin);
+	password[strlen(password)-1] = '\0';
+	tcsetattr(fileno(stdin), TCSAFLUSH, &old);
+	fprintf(stdout, "\n");
+
+	return 0;
+}
+
+#define MAX_HTTP_LINE 1024
+int read_http_line(char * buf, FILE * f) {
+	memset(buf, 0x00, MAX_HTTP_LINE);
+
+	fgets(buf, MAX_HTTP_LINE-1, f);
+
+	if (ferror(f)) {
+		if (errno == EAGAIN) {
+			fprintf(stderr, "recieve timed out waiting for headers\n");
+			return 28;
+		}
+		fprintf(stderr, "receive error waiting for headers\n");
+		return 26;
+	}
+
+	char * _r = strchr(buf, '\r');
+	if (_r) {
+		*_r = '\0';
+	}
+	if (!_r) {
+		_r = strchr(buf, '\n'); /* that's not right, but, whatever */
+		if (_r) {
+			*_r = '\0';
+		}
+	}
+
+	return 0;
+}
+
+void bad_response(void) {
+	fprintf(stderr, "Bad response.\n");
+	exit(1);
+}
+
+int http_fetch(FILE * f) {
+	hashmap_t * headers = hashmap_create(10);
+
+	/* Parse response */
+	{
+		char buf[MAX_HTTP_LINE];
+		int resp = read_http_line(buf, f);
+		if (resp) return resp;
+
+		char * elements[3];
+
+		elements[0] = buf;
+		elements[1] = strchr(elements[0], ' ');
+		if (!elements[1]) bad_response();
+		*elements[1] = '\0';
+		elements[1]++;
+
+		elements[2] = strchr(elements[1], ' ');
+		if (!elements[2]) bad_response();
+		*elements[2] = '\0';
+		elements[2]++;
+
+		if (strcmp(elements[1], "200") && fetch_options.fail_fast) return 22;
+	}
+
+	fetch_options.out = stdout;
+	if (fetch_options.output_file) {
+		fetch_options.out = fopen(fetch_options.output_file, "w+");
+		if (!fetch_options.out) {
+			perror("fopen");
+			return 25;
+		}
+	}
+
+	/* Parse headers */
+	while (1) {
+		char buf[MAX_HTTP_LINE];
+		read_http_line(buf, f);
+
+		if (!*buf) {
+			break;
+		}
+
+		/* Split */
+		char * name = buf;
+		char * value = strstr(buf, ": ");
+		if (!value) bad_response();
+		*value = '\0';
+		value += 2;
+
+		hashmap_set(headers, name, strdup(value));
+	}
+
+	if (fetch_options.show_headers) {
+		list_t * hash_keys = hashmap_keys(headers);
+		foreach(_key, hash_keys) {
+			char * key = (char *)_key->value;
+			fprintf(stderr, "[%s] = %s\n", key, (char*)hashmap_get(headers, key));
+		}
+		list_free(hash_keys);
+		free(hash_keys);
+	}
+
+	/* determine how many bytes we should read now */
+	if (!hashmap_has(headers, "Content-Length")) {
+		fprintf(stderr, "Don't know how much to read.\n");
+		return 8;
+	}
+
+	int bytes_to_read = atoi(hashmap_get(headers, "Content-Length"));
+	fetch_options.content_length = bytes_to_read;
+
+	gettimeofday(&fetch_options.start, NULL);
+
+	while (bytes_to_read > 0) {
+		char buf[1024];
+		size_t r = fread(buf, 1, bytes_to_read < 1024 ? bytes_to_read : 1024, f);
+		if (ferror(f)) {
+			if (errno == EAGAIN) {
+				fprintf(stderr, "received timed out\n");
+				return 28;
+			}
+			fprintf(stderr, "receive error\n");
+			return 26;
+		}
+		fwrite(buf, 1, r, fetch_options.out);
+		fetch_options.size += r;
+		print_progress(0);
+		if (fetch_options.machine_readable && fetch_options.content_length) {
+			fprintf(stdout,"%zu %zu\n",fetch_options.size,fetch_options.content_length);
+		}
+		bytes_to_read -= r;
+	}
+	print_progress(1);
+
+	return 0;
+}
+
+int main(int argc, char * argv[]) {
+
+	int opt;
+
+	while ((opt = getopt(argc, argv, "?c:hmo:Opu:vs:fL:")) != -1) {
+		switch (opt) {
+			case '?':
+				return usage(argv);
+			case 'O':
+				fetch_options.calculate_output = 1;
+				break;
+			case 'c':
+				fetch_options.cookie = optarg;
+				break;
+			case 'h':
+				fetch_options.show_headers = 1;
+				break;
+			case 'o':
+				fetch_options.output_file = optarg;
+				break;
+			case 'u':
+				fetch_options.upload_file = optarg;
+				break;
+			case 'v':
+				fetch_options.show_progress = 1;
+				ioctl(STDERR_FILENO, TIOCGWINSZ, &fetch_options.ws);
+				break;
+			case 'm':
+				fetch_options.machine_readable = 1;
+				break;
+			case 'p':
+				fetch_options.prompt_password = 1;
+				break;
+			case 's':
+				fetch_options.slow_upload = atoi(optarg);
+				break;
+			case 'f':
+				fetch_options.fail_fast = 1;
+				break;
+			case 'L':
+				fetch_options.label = optarg;
+				break;
+		}
+	}
+
+	if (optind >= argc) {
+		return usage(argv);
+	}
+
+	struct http_req my_req;
+	if (parse_url(argv[optind], &my_req)) {
+		return 1;
+	}
+
+	if (my_req.ssl) {
+		/* TODO look for a viable backend. */
+		fprintf(stderr, "%s: no tls backend\n", argv[0]);
+		return 1;
+	}
+
+	if (fetch_options.calculate_output) {
+		char * tmp = strdup(my_req.path);
+		char * x = strrchr(tmp,'/');
+		if (x) {
+			tmp = x + 1;
+		}
+		fetch_options.output_file = tmp;
+	}
+
+	int sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (sock < 0) {
+		perror("socket");
+		return 1;
+	}
+
+	struct hostent * remote = gethostbyname(my_req.domain);
+
+	if (!remote) {
+		perror("gethostbyname");
+		return 1;
+	}
+
+	struct sockaddr_in addr;
+	addr.sin_family = AF_INET;
+	memcpy(&addr.sin_addr.s_addr, remote->h_addr, remote->h_length);
+	addr.sin_port = htons(my_req.port);
+
+	if (connect(sock, (struct sockaddr*)&addr, sizeof(struct sockaddr_in)) < 0) {
+		perror("connect");
+		return 1;
+	}
+
+	struct timeval tv;
+	tv.tv_sec = 5;
+	tv.tv_usec = 0;
+	setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(struct timeval));
+
+	FILE * f = fdopen(sock,"w+");
+
+	if (!f) {
+		fprintf(stderr, "Nope.\n");
+		return 1;
+	}
+
+	if (fetch_options.prompt_password) {
+		fetch_options.password = malloc(100);
+		collect_password(fetch_options.password);
+	}
+
+	if (fetch_options.upload_file) {
+		FILE * in_file = fopen(fetch_options.upload_file, "r");
+
+		srand(time(NULL));
+		int boundary_fuzz = rand();
+		char tmp[512];
+
+		size_t out_size = 0;
+		if (fetch_options.password) {
+			out_size += sprintf(tmp,
+				"--" BOUNDARY "%08x\r\n"
+				"Content-Disposition: form-data; name=\"password\"\r\n"
+				"\r\n"
+				"%s\r\n",boundary_fuzz, fetch_options.password);
+		}
+
+		out_size += strlen("--" BOUNDARY "00000000\r\n"
+				"Content-Disposition: form-data; name=\"file\"; filename=\"\"\r\n"
+				"Content-Type: application/octet-stream\r\n"
+				"\r\n"
+				/* Data goes here */
+				"\r\n"
+				"--" BOUNDARY "00000000" "--\r\n");
+
+		out_size += strlen(fetch_options.upload_file);
+
+		struct stat sb;
+		fstat(fileno(in_file), &sb);
+		out_size += sb.st_size;
+
+		fprintf(f,
+			"POST /%s HTTP/1.0\r\n"
+			"User-Agent: curl/7.35.0\r\n"
+			"Host: %s\r\n"
+			"Accept: */*\r\n"
+			"Content-Length: %d\r\n"
+			"Content-Type: multipart/form-data; boundary=" BOUNDARY "%08x\r\n"
+			"\r\n", my_req.path, my_req.domain, (int)out_size, boundary_fuzz);
+
+		fprintf(f,"%s",tmp);
+		fprintf(f,
+				"--" BOUNDARY "%08x\r\n"
+				"Content-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\n"
+				"Content-Type: application/octet-stream\r\n"
+				"\r\n", boundary_fuzz, fetch_options.upload_file);
+
+		while (!feof(in_file)) {
+			char buf[1024];
+			size_t r = fread(buf, 1, 1024, in_file);
+			fwrite(buf, 1, r, f);
+			if (fetch_options.slow_upload) {
+				usleep(1000 * fetch_options.slow_upload); /* TODO fix terrible network stack; hopefully this ensures we send stuff right. */
+			}
+		}
+
+		fclose(in_file);
+
+		fprintf(f,"\r\n--" BOUNDARY "%08x--\r\n", boundary_fuzz);
+		fflush(f);
+
+	} else if (fetch_options.cookie) {
+		fprintf(f,
+			"GET /%s HTTP/1.0\r\n"
+			"User-Agent: curl/7.35.0\r\n"
+			"Host: %s\r\n"
+			"Accept: */*\r\n"
+			"Cookie: %s\r\n"
+			"\r\n", my_req.path, my_req.domain, fetch_options.cookie);
+
+	} else {
+		fprintf(f,
+			"GET /%s HTTP/1.0\r\n"
+			"User-Agent: curl/7.35.0\r\n"
+			"Host: %s\r\n"
+			"Accept: */*\r\n"
+			"\r\n", my_req.path, my_req.domain);
+	}
+
+	int resp;
+	if ((resp = http_fetch(f))) return resp;
+
+	fflush(fetch_options.out);
+
+	if (fetch_options.show_progress) {
+		fprintf(stderr,"\n");
+	}
+
+	if (fetch_options.machine_readable) {
+		fprintf(stdout,"done\n");
+	}
+
+	return 0;
+}

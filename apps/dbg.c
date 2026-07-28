@@ -1,0 +1,593 @@
+/**
+ * @brief Debugger.
+ *
+ * @copyright
+ * This file is part of ToaruOS and is released under the terms
+ * of the NCSA / University of Illinois License - see LICENSE.md
+ * Copyright (C) 2021 K. Lange
+ */
+#include <errno.h>
+#include <string.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <getopt.h>
+#include <signal.h>
+#include <ctype.h>
+#include <sys/ptrace.h>
+#include <sys/wait.h>
+#include <sys/signal.h>
+#include <sys/signal_defs.h>
+#include <sys/utsname.h>
+#include <sys/time.h>
+#include <sys/stat.h>
+
+#include <toaru/rline.h>
+#include <toaru/hashmap.h>
+#include <kernel/elf.h>
+#include <sys/uregs.h>
+
+static char * last_command = NULL;
+static char * binary_path = NULL;
+static FILE * binary_obj = NULL;
+static pid_t  binary_pid = 0;
+static int    binary_is_child = 0;
+
+static void dump_regs(struct URegs * r) {
+	fprintf(stdout, UREGS_FMT, UREGS_ARGS(r));
+
+}
+
+static int data_read_bytes(pid_t pid, uintptr_t addr, char * buf, size_t size) {
+	for (unsigned int i = 0; i < size; ++i) {
+		if (ptrace(PTRACE_PEEKDATA, pid, (void*)addr++, &buf[i])) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+static int data_read_int(pid_t pid, uintptr_t addr) {
+	int x;
+	data_read_bytes(pid, addr, (char*)&x, sizeof(int));
+	return x;
+}
+
+static uintptr_t data_read_ptr(pid_t pid, uintptr_t addr) {
+	uintptr_t x;
+	data_read_bytes(pid, addr, (char*)&x, sizeof(uintptr_t));
+	return x;
+}
+
+static void string_arg(pid_t pid, uintptr_t ptr, size_t maxsize) {
+	FILE * logfile = stdout;
+
+	if (ptr == 0) {
+		fprintf(logfile, "NULL");
+		return;
+	}
+
+	fprintf(logfile, "\"");
+
+	size_t size = 0;
+	uint8_t buf = 0;
+
+	do {
+		long result = ptrace(PTRACE_PEEKDATA, pid, (void*)ptr, &buf);
+		if (result != 0) break;
+		if (!buf) {
+			fprintf(logfile, "\"");
+			return;
+		}
+
+		if (buf == '\\') fprintf(logfile, "\\\\");
+		else if (buf == '"') fprintf(logfile, "\\\"");
+		else if (buf >= ' ' && buf < '~') fprintf(logfile, "%c", buf);
+		else if (buf == '\r') fprintf(logfile, "\\r");
+		else if (buf == '\n') fprintf(logfile, "\\n");
+		else fprintf(logfile, "\\x%02x", buf);
+
+		ptr++;
+		size++;
+		if (size > maxsize) break;
+	} while (buf);
+
+	fprintf(logfile, "\"...");
+}
+
+#if 0
+static char * read_string(pid_t pid, uintptr_t ptr) {
+	if (!ptr) return strdup("(null)");
+	size_t len = 0;
+	uint8_t buf = 0;
+	while ((data_read_bytes(pid, ptr + len, (char*)&buf, 1), buf)) len++;
+
+	char * out = malloc(len + 1);
+	data_read_bytes(pid, ptr, out, len+1);
+	return out;
+}
+#endif
+
+static int find_symbol(pid_t pid, uintptr_t addr_in, char ** name, uintptr_t *addr_out, char ** objname) {
+
+	intptr_t  current_max = INTPTR_MAX;
+	uintptr_t current_addr = (uintptr_t)NULL;
+	//uintptr_t current_xname = (uintptr_t)NULL;
+	char * current_name = NULL;
+	char * current_obj = NULL;
+	uintptr_t best_base = 0;
+
+	/* Can we cheat and peek at ld.so? */
+	if (addr_in < 0x40000000) {
+		current_obj = strdup("libc.so");
+		best_base = 0x10000000;
+	}
+
+	/* Figure out where this object is in the objects map */
+	FILE * f = binary_obj;
+	if (current_obj) {
+		/* Try to open that */
+		struct stat stat_buf;
+		char path[1024];
+		sprintf(path, "/lib/%s", current_obj);
+		if (stat(path, &stat_buf)) {
+			sprintf(path, "/usr/lib/%s", current_obj);
+			if (stat(path, &stat_buf)) goto _bail;
+		}
+
+		f = fopen(path, "r");
+	} else {
+_bail:
+		current_obj = strdup(binary_path);
+		best_base = 0;
+	}
+
+	fseek(f, 0, SEEK_SET);
+	Elf64_Header header;
+	fread(&header, sizeof(Elf64_Header), 1, f);
+
+	for (unsigned int i = 0; i < header.e_shnum; ++i) {
+		fseek(f, header.e_shoff + header.e_shentsize * i, SEEK_SET);
+		Elf64_Shdr sectionHeader;
+		fread(&sectionHeader, sizeof(Elf64_Shdr), 1, f);
+		switch (sectionHeader.sh_type) {
+			case SHT_SYMTAB:
+			case SHT_DYNSYM: {
+				/* Try to get the actual one if possible */
+				Elf64_Sym * symtab = malloc(sectionHeader.sh_size);
+
+				if (sectionHeader.sh_addr > 0x40000000) {
+					data_read_bytes(pid, sectionHeader.sh_addr, (char*)symtab, sectionHeader.sh_size);
+				} else {
+					fseek(f, sectionHeader.sh_offset, SEEK_SET);
+					fread(symtab, sectionHeader.sh_size, 1, f);
+				}
+
+				Elf64_Shdr shdr_strtab;
+				fseek(f, header.e_shoff + header.e_shentsize * sectionHeader.sh_link, SEEK_SET);
+				fread(&shdr_strtab, sizeof(Elf64_Shdr), 1, f);
+				char * strtab = malloc(shdr_strtab.sh_size);
+				fseek(f, shdr_strtab.sh_offset, SEEK_SET);
+				fread(strtab, shdr_strtab.sh_size, 1, f);
+
+				for (unsigned int i = 0; i < sectionHeader.sh_size / sizeof(Elf64_Sym); ++i) {
+					if (!symtab[i].st_value) continue;
+					if ((symtab[i].st_info & 0xF) == STT_SECTION) continue;
+					if ((symtab[i].st_info & 0xF) == STT_NOTYPE) continue;
+					if (addr_in >= ((uintptr_t)symtab[i].st_value + best_base)) {
+						intptr_t x = addr_in - ((uintptr_t)symtab[i].st_value + best_base);
+						if (x < current_max) {
+							if (current_name) free(current_name);
+							current_max = x;
+							current_addr = symtab[i].st_value + best_base;
+							current_name = strdup(strtab + symtab[i].st_name);
+						}
+					}
+				}
+
+				free(strtab);
+				free(symtab);
+			}
+			break;
+		}
+	}
+
+	*addr_out = current_addr;
+	*name = current_name;
+	*objname = current_obj;
+
+	if (current_name) return 1;
+	if (f != binary_obj) fclose(f);
+	return 0;
+}
+
+static void show_libs(pid_t pid) {
+	/* TODO */
+}
+
+static void attempt_backtrace(pid_t pid, struct URegs * regs) {
+
+	/* We already printed the top, now let's try to dig down */
+	uintptr_t ip = uregs_ip(regs);
+	uintptr_t bp = uregs_bp(regs);
+	int depth = 0;
+	int max_depth = 20;
+
+	while (bp && ip && depth < max_depth && ip < 0xFFFfff0000000000UL) {
+		char * name = NULL;
+		char * objname = NULL;
+		uintptr_t addr = 0;
+		if (find_symbol(pid, ip - 1, &name, &addr, &objname)) {
+			fprintf(stderr, "<0x%016zx> %s+%#zx in %s\n",
+				ip,
+				name, ip - addr, objname);
+			free(name);
+			free(objname);
+		}
+
+		ip = data_read_ptr(pid, bp + sizeof(uintptr_t));
+		bp = data_read_ptr(pid, bp);
+		depth++;
+	}
+}
+
+static void show_commandline(pid_t pid, int status, struct URegs * regs) {
+
+	fprintf(stderr, "[Process %d, ip=%#zx]\n",
+		pid, uregs_ip(regs));
+
+	/* Try to figure out what symbol that is */
+	char * name = NULL;
+	char * objname = NULL;
+	uintptr_t addr = 0;
+	if (find_symbol(pid, uregs_ip(regs), &name, &addr, &objname)) {
+		fprintf(stderr, "     %s+%zx in %s\n",
+			name, uregs_ip(regs) - addr, objname);
+		free(name);
+		free(objname);
+	}
+
+	while (1) {
+		char buf[4096] = {0};
+		rline_exit_string = "";
+		rline_exp_set_prompts("(dbg) ", "", 6, 0);
+		rline_exp_set_syntax("dbg");
+		rline_exp_set_tab_complete_func(NULL); /* TODO */
+		if (rline(buf, 4096) == 0) goto _exitDebugger;
+
+		char *nl = strstr(buf, "\n");
+		if (nl) *nl = '\0';
+		if (!strlen(buf)) {
+			if (last_command) {
+				strcpy(buf, last_command);
+			} else {
+				continue;
+			}
+		} else {
+			rline_history_insert(strdup(buf));
+			rline_scroll = 0;
+			if (last_command) free(last_command);
+			last_command = strdup(buf);
+		}
+
+		/* Tokenize just the first command */
+		char * arg = NULL;
+		char * sp = strstr(buf, " ");
+		if (sp) {
+			*sp = '\0';
+			arg = sp + 1;
+		}
+
+		if (!strcmp(buf, "show")) {
+			if (!arg) {
+				fprintf(stderr, "Things that can be shown:\n");
+				fprintf(stderr, "   regs\n");
+				fprintf(stderr, "   libs\n");
+				continue;
+			}
+
+			if (!strcmp(arg, "regs")) {
+				dump_regs(regs);
+			} else if (!strcmp(arg, "libs")) {
+				show_libs(pid);
+			} else {
+				fprintf(stderr, "Don't know how to show '%s'\n", arg);
+			}
+		} else if (!strcmp(buf, "bt") || !strcmp(buf, "backtrace")) {
+			attempt_backtrace(pid, regs);
+		} else if (!strcmp(buf, "continue") || !strcmp(buf,"c")) {
+			int signum = WSTOPSIG(status);
+			if (signum == SIGINT) signum = 0;
+			ptrace(PTRACE_CONT, pid, NULL, (void*)(uintptr_t)signum);
+			return;
+		} else if (!strcmp(buf, "signal")) {
+			if (!arg) {
+				fprintf(stderr, "'signal' needs an argument\n");
+				continue;
+			}
+			int signum;
+			for (char *s = arg; *s; ++s) {
+				*s = toupper(*s);
+			}
+			if (str2sig(arg, &signum)) {
+				fprintf(stderr, "'%s' is not a recognized signal\n", arg);
+				continue;
+			}
+			ptrace(PTRACE_CONT, pid, NULL, (void*)(uintptr_t)signum);
+			return;
+		} else if (!strcmp(buf, "step") || !strcmp(buf,"s")) {
+			int signum = WSTOPSIG(status);
+			if (signum == SIGINT) signum = 0;
+			ptrace(PTRACE_SINGLESTEP, pid, NULL, (void*)(uintptr_t)signum);
+			return;
+		} else if (!strcmp(buf, "poke")) {
+			char * addr = arg;
+			char * data = strstr(addr, " ");
+			if (!data) {
+				fprintf(stderr, "usage: poke addr byte\n");
+				continue;
+			}
+			*data = '\0'; data++;
+
+			uintptr_t addr_ = strtoul(addr, NULL, 0);
+			uintptr_t data_ = strtoul(data, NULL, 0);
+
+			if (ptrace(PTRACE_POKEDATA, pid, (void*)addr_, (void*)&data_) != 0) {
+				fprintf(stderr, "poke: %s\n", strerror(errno));
+				continue;
+			}
+
+		} else if (!strcmp(buf, "print") || !strcmp(buf,"p")) {
+			char * fmt = arg;
+			char * sp = strstr(arg, " ");
+			if (!sp) {
+				fprintf(stderr, "usage: print fmt addr\n");
+				continue;
+			}
+			*sp = '\0'; sp++;
+
+			uintptr_t addr = strtoul(sp,NULL,0);
+
+			/* Parse any leading numbers */
+			int count = 1;
+
+			if (*fmt >= '1' && *fmt <= '9') {
+				count = (*fmt - '0');
+				fmt++;
+				while (*fmt >= '0' && *fmt <= '9') {
+					count *= 10;
+					count += (*fmt - '0');
+					fmt++;
+				}
+			}
+
+			/* Parse the format */
+			for (int i = 0; i < count; ++i) {
+				if (!strcmp(fmt, "x")) {
+					uint8_t buf[1];
+					data_read_bytes(pid, addr, (char*)buf, 1);
+					printf("%02x", buf[0]);
+					addr += 1;
+				} else if (!strcmp(fmt, "i")) {
+					printf("%d", data_read_int(pid,addr));
+					addr += sizeof(int);
+				} else if (!strcmp(fmt, "l")) {
+					printf("%ld", (intptr_t)data_read_ptr(pid,addr));
+					addr += sizeof(long);
+				} else if (!strcmp(fmt, "p")) {
+					printf("%#zx", data_read_ptr(pid,addr));
+					addr += sizeof(uintptr_t);
+				} else if (!strcmp(fmt, "s")) {
+					string_arg(pid,addr,count == 1 ? 30 : count);
+					break;
+				} else {
+					printf("print: invalid format string");
+					break;
+				}
+				if (i + 1 < count) {
+					printf(" ");
+				}
+			}
+			printf("\n");
+		} else if (!strcmp(buf, "help")) {
+			printf("commands:\n"
+				"  show (regs, libs)\n"
+				"  backtrace\n"
+				"  continue\n"
+				"  signal signum\n"
+				"  step\n"
+				"  poke addr byte\n"
+				"  print fmt addr\n");
+			continue;
+		} else {
+			fprintf(stderr, "dbg: unrecognized command '%s'\n", buf);
+			continue;
+		}
+	}
+
+_exitDebugger:
+	if (binary_is_child) {
+		fprintf(stderr, "Terminating child process '%d'.\n", pid);
+		ptrace(PTRACE_DETACH, pid, NULL, (void*)(uintptr_t)SIGKILL);
+	}
+	exit(0);
+}
+
+static int usage(char * argv[]) {
+#define T_I "\033[3m"
+#define T_O "\033[0m"
+	fprintf(stderr, "usage: %s command...\n"
+			"  -h         " T_I "Show this help text." T_O "\n",
+			argv[0]);
+	return 1;
+}
+
+#define DEFAULT_PATH "/bin:/usr/bin"
+static char * find_binary(const char * file) {
+	if (file && (!strstr(file, "/"))) {
+		char * path = getenv("PATH");
+		if (!path) {
+			path = DEFAULT_PATH;
+		}
+		char * xpath = strdup(path);
+		char * p, * last;
+		for ((p = strtok_r(xpath, ":", &last)); p; p = strtok_r(NULL, ":", &last)) {
+			int r;
+			struct stat stat_buf;
+			char * exe = malloc(strlen(p) + strlen(file) + 2);
+			strcpy(exe, p);
+			strcat(exe, "/");
+			strcat(exe, file);
+			r = stat(exe, &stat_buf);
+			if (r != 0) {
+				continue;
+			}
+			if (!(stat_buf.st_mode & 0111)) {
+				continue;
+			}
+			free(xpath);
+			return exe;
+		}
+		free(xpath);
+		return NULL;
+	} else if (file) {
+		return strdup(file);
+	}
+	return NULL;
+}
+
+static void pass_sig(int sig) {
+	kill(binary_pid, sig);
+	signal(SIGINT, pass_sig);
+}
+
+int main(int argc, char * argv[]) {
+	pid_t target_pid = 0;
+	int opt;
+	while ((opt = getopt(argc, argv, "+o:p:h")) != -1) {
+		switch (opt) {
+			case 'p':
+				target_pid = atoi(optarg);
+				break;
+			case 'h':
+				return (usage(argv), 0);
+			case '?':
+				return usage(argv);
+		}
+	}
+
+	if (optind == argc) {
+		return usage(argv);
+	}
+
+	/* TODO find argv[optind] */
+	/* TODO load symbols from it, and from its dependencies... with offsets... from ld.so... */
+
+	binary_path = find_binary(argv[optind]);
+
+	if (!binary_path) {
+		fprintf(stderr, "%s: %s: No such file or not an executable.\n",
+			argv[0], argv[optind]);
+		return 1;
+	}
+
+	binary_obj = fopen(binary_path, "r");
+
+	if (!binary_obj) {
+		fprintf(stderr, "%s: %s: %s\n",
+			argv[0], argv[optind], strerror(errno));
+		return 1;
+	}
+
+	/* Catch one potential mistake early... */
+	struct stat stat_buf;
+	fstat(fileno(binary_obj), &stat_buf);
+	if (stat_buf.st_mode & S_IFDIR) {
+		fprintf(stderr, "%s: %s: Is a directory\n", argv[0], binary_path);
+		return 1;
+	}
+
+	/* Attempt to load symbol information... */
+
+	if (target_pid) {
+		binary_pid = target_pid;
+		if (ptrace(PTRACE_ATTACH, binary_pid, NULL, NULL) < 0) {
+			fprintf(stderr, "%s: ptrace: %s\n", argv[0], strerror(errno));
+			return 1;
+		}
+		signal(SIGINT, pass_sig);
+	} else {
+		binary_is_child = 1;
+		binary_pid = fork();
+		if (!binary_pid) {
+			if (ptrace(PTRACE_TRACEME, 0, NULL, NULL) < 0) {
+				fprintf(stderr, "%s: ptrace: %s\n", argv[0], strerror(errno));
+				return 1;
+			}
+			execv(binary_path, &argv[optind]);
+			/* If we got to this point at all... */
+			fprintf(stderr, "%s: %s: execv: %s\n", argv[0], binary_path, strerror(errno));
+			return 1;
+		}
+
+		signal(SIGINT, SIG_IGN);
+	}
+
+	while (1) {
+		int status = 0;
+		pid_t res = waitpid(binary_pid, &status, WSTOPPED);
+
+		if (res == 0) continue;
+
+		if (res < 0) {
+			if (errno == EINTR) continue;
+			fprintf(stderr, "%s: waitpid: %s\n", argv[0], strerror(errno));
+		} else {
+			if (WIFSTOPPED(status)) {
+				if (WSTOPSIG(status) == SIGTRAP) {
+					/* Don't care about TRAP right now */
+					int event = (status >> 16) & 0xFF;
+					switch (event) {
+						case PTRACE_EVENT_SINGLESTEP: {
+								struct URegs regs;
+								ptrace(PTRACE_GETREGS, res, NULL, &regs);
+								show_commandline(res, status, &regs);
+							}
+							break;
+						default:
+							//ptrace(PTRACE_SIGNALS_ONLY_PLZ, p, NULL, NULL);
+							ptrace(PTRACE_CONT, res, NULL, NULL);
+							break;
+					}
+				} else {
+					char signame[SIG2STR_MAX+3] = {'S','I','G',0};
+					if (sig2str(WSTOPSIG(status), signame+3)) {
+						sprintf(signame, "%d", WSTOPSIG(status));
+					}
+
+					printf("Program received signal %s.\n", signame);
+
+					struct URegs regs;
+					ptrace(PTRACE_GETREGS, res, NULL, &regs);
+
+					show_commandline(res, status, &regs);
+				}
+			} else if (WIFSIGNALED(status)) {
+					char signame[SIG2STR_MAX+3] = {'S','I','G',0};
+					if (sig2str(WTERMSIG(status), signame+3)) {
+						sprintf(signame, "%d", WTERMSIG(status));
+					}
+				fprintf(stderr, "Process %d was killed by %s.\n", res, signame);
+				return 0;
+			} else if (WIFEXITED(status)) {
+				fprintf(stderr, "Process %d exited normally with status %d.\n", res, WEXITSTATUS(status));
+				return 0;
+			} else {
+				fprintf(stderr, "Unknown state?\n");
+			}
+		}
+	}
+	
+
+	return 0;
+}

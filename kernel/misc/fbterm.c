@@ -1,0 +1,487 @@
+/**
+ * @file  kernel/misc/fbterm.c
+ * @brief Crude framebuffer terminal for 32bpp framebuffer devices.
+ *
+ * Provides a simple graphical text renderer for early startup, with
+ * support for simple escape sequences, on top of a framebuffer set up
+ * with the `lfbvideo` module.
+ *
+ * @copyright
+ * This file is part of ToaruOS and is released under the terms
+ * of the NCSA / University of Illinois License - see LICENSE.md
+ * Copyright (C) 2021 K. Lange
+ */
+#include <kernel/printf.h>
+#include <kernel/string.h>
+#include <kernel/args.h>
+#include <kernel/mmu.h>
+#include <kernel/video.h>
+#include <kernel/vfs.h>
+#include <bits/errno.h>
+
+/* Whether to scroll or wrap when cursor reaches the bottom. */
+static int fbterm_scroll = 0;
+static void (*write_char)(int, int, int, int, int) = NULL;
+static int (*get_width)(void) = NULL;
+static int (*get_height)(void) = NULL;
+static void (*scroll_terminal)(void) = NULL;
+static void (*get_cursor_adj)(int*,int*) = NULL;
+
+static int x = 0;
+static int y = 0;
+static int term_state = 0;
+static char term_buf[1024] = {0};
+static int term_buf_c = 0;
+static int fb_left_margin = 0;
+
+/* Bitmap font details */
+#include "../../apps/terminal-font.h"
+#define char_height LARGE_FONT_CELL_HEIGHT
+#define char_width  LARGE_FONT_CELL_WIDTH
+
+/* Default colors */
+#define BG_COLOR 0
+#define FG_COLOR 7
+
+/**
+ * @brief Basic 16-color ANSI palette with Tango colors.
+ */
+static uint32_t * term_colors;
+
+static uint32_t palette_tango[] = {
+	/* black  */ 0xFF000000,
+	/* red    */ 0xFFcc0000,
+	/* green  */ 0xFF3e9a06,
+	/* brown  */ 0xFFc4a000,
+	/* navy   */ 0xFF3465a4,
+	/* purple */ 0xFF75507b,
+	/* d cyan */ 0xFF06989a,
+	/* gray   */ 0xFFbbbbbb, /* slightly dimmer than the userspace terminal, so bold stands out more */
+	/* d gray */ 0xFF555753,
+	/* red    */ 0xFFef2929,
+	/* green  */ 0xFF8ae234,
+	/* yellow */ 0xFFfce94f,
+	/* blue   */ 0xFF729fcf,
+	/* magenta*/ 0xFFad7fa8,
+	/* cyan   */ 0xFF34e2e2,
+	/* white  */ 0xFFFFFFFF,
+};
+
+static uint32_t palette_vga[] = {
+	/* black  */ 0xFF000000,
+	/* red    */ 0xFFaa0000,
+	/* green  */ 0xFF00aa00,
+	/* brown  */ 0xFFaa5500,
+	/* navy   */ 0xFF0000aa,
+	/* purple */ 0xFFaa00aa,
+	/* d cyan */ 0xFF00aaaa,
+	/* gray   */ 0xFFaaaaaa,
+	/* d gray */ 0xFF555555,
+	/* red    */ 0xFFff5555,
+	/* green  */ 0xFF55ff55,
+	/* yellow */ 0xFFffff55,
+	/* blue   */ 0xFF5555ff,
+	/* magenta*/ 0xFFff55ff,
+	/* cyan   */ 0xFF55ffff,
+	/* white  */ 0xFFffffff,
+};
+
+static int ansi_to_vga[] = {
+	0, 4, 2, 6, 1, 5, 3, 7,
+	8,12,10,14, 9,13,11,15
+};
+
+static uint32_t fg_color = FG_COLOR;
+static uint32_t bg_color = BG_COLOR;
+static int fb_scale = 1;
+static uint8_t * fb_mapped = NULL;
+
+static inline void set_point(int x, int y, uint32_t value) {
+	if (lfb_resolution_b == 32) {
+		((uint32_t*)fb_mapped)[y * (lfb_resolution_s/4) + x] = value;
+		#ifdef __aarch64__
+		if (fb_mapped == lfb_vid_memory) {
+			asm volatile ("dc cvac, %0\n" :: "r"((uintptr_t)&((uint32_t*)fb_mapped)[y * (lfb_resolution_s/4) + x]) : "memory");
+		}
+		#endif
+	} else if (lfb_resolution_b == 24) {
+		fb_mapped[y * lfb_resolution_s + x * 3 + 0] = (value >> 0) & 0xFF;
+		fb_mapped[y * lfb_resolution_s + x * 3 + 1] = (value >> 8) & 0xFF;
+		fb_mapped[y * lfb_resolution_s + x * 3 + 2] = (value >> 16) & 0xFF;
+	}
+}
+
+static void fb_write_char(int _x, int _y, int val, int color, int bg_color) {
+	if (val > 255) val = 4; /* Replacement character */
+
+	int x = fb_left_margin + _x * char_width * fb_scale;
+	int y = _y * char_height * fb_scale;
+
+	uint8_t * c = large_font[val];
+	for (uint8_t i = 0; i < char_height; ++i) {
+		for (int ii = 0; ii < fb_scale; ++ii) { /* Line doubling */
+			for (uint8_t j = 0; j < char_width; ++j) {
+				for (int jj = 0; jj < fb_scale; ++jj) { /* Column doubling */
+					set_point(
+						x + j * fb_scale + jj,
+						y + i * fb_scale + ii,
+						term_colors[(c[i] & (1 << (LARGE_FONT_MASK-j))) ? color : bg_color]
+					);
+				}
+			}
+		}
+	}
+}
+
+static int fb_get_width(void) {
+	return (lfb_resolution_x - fb_left_margin) / (char_width * fb_scale);
+}
+
+static int fb_get_height(void) {
+	return lfb_resolution_y / (char_height * fb_scale);
+}
+
+static void fb_get_cursor_adj(int *x, int *y) {
+	*x = char_width * fb_scale;
+	*y = char_height * fb_scale;
+}
+
+static void fb_scroll_terminal(void) {
+	memmove(fb_mapped, fb_mapped + sizeof(uint32_t) * lfb_resolution_x * char_height, (lfb_resolution_y - char_height) * lfb_resolution_x * 4);
+	memset(fb_mapped + sizeof(uint32_t) * (lfb_resolution_y - char_height) * lfb_resolution_x, 0x00, char_height * lfb_resolution_x * 4);
+}
+
+static void draw_square(int x, int y) {
+	int center_x = lfb_resolution_x / 2;
+	int center_y = lfb_resolution_y / 2;
+	for (size_t _y = 0; _y < 7; ++_y) {
+		uint32_t color = 0xFF00B2FF - (y * 8 + _y) * 0x200;
+		for (size_t _x = 0; _x < 7; ++_x) {
+			set_point(center_x - 32 + x * 8 + _x, center_y - 32 + y * 8 + _y, color);
+		}
+	}
+}
+
+/* Compact Razion "R" mark used by the early framebuffer splash. */
+static uint64_t logo_squares = 0x814224187E42427EUL;
+void fbterm_draw_logo(void) {
+	for (size_t y = 0; y < 8; ++y) {
+		for (size_t x = 0; x < 8; ++x) {
+			if (logo_squares & (1 << x)) {
+				draw_square(x,y);
+			}
+		}
+		logo_squares >>= 8;
+	}
+}
+
+void fbterm_reset(void) {
+	x = 0;
+	y = 0;
+	term_state = 0;
+	fg_color = FG_COLOR;
+	bg_color = BG_COLOR;
+}
+
+static void fbterm_init_framebuffer(void) {
+	char *left_margin_val, *palette_val, *logo_val, *scale;
+	if ((left_margin_val = args_value("fbterm-margin"))) {
+		fb_left_margin = atoi(left_margin_val);
+	}
+	term_colors = palette_tango;
+	if ((palette_val = args_value("fbterm-palette"))) {
+		if (!strcmp(palette_val, "vga")) {
+			term_colors = palette_vga;
+		}
+	}
+	if ((logo_val = args_value("fbterm-logo"))) {
+		logo_squares = xtoi(logo_val);
+	}
+	if ((scale = args_value("fbterm-scale"))) {
+		fb_scale = atoi(scale);
+		if (fb_scale < 1) fb_scale = 1;
+		if (fb_scale > 16) fb_scale = 16;
+	}
+	write_char = fb_write_char;
+	get_width = fb_get_width;
+	get_height = fb_get_height;
+	scroll_terminal = fb_scroll_terminal;
+	get_cursor_adj = fb_get_cursor_adj;
+
+	extern int lfb_use_write_combining;
+	if (lfb_use_write_combining) {
+		/* Re-map video memory in our device space */
+		size_t map_size = lfb_memsize;
+		if (map_size & 0xFFF) map_size = (map_size + 0xFFF) & ~0xFFF;
+		fb_mapped = mmu_map_mmio_region(((uintptr_t)(lfb_vid_memory) & 0xFFFFFFFF), map_size);
+		for (uintptr_t i = 0; i < lfb_memsize; i += 0x1000) {
+			union PML * page = mmu_get_page((uintptr_t)fb_mapped + i, MMU_GET_MAKE);
+			mmu_frame_allocate(page, MMU_FLAG_KERNEL | MMU_FLAG_WRITABLE | MMU_FLAG_WC);
+		}
+	} else {
+		fb_mapped = lfb_vid_memory;
+	}
+
+	fbterm_draw_logo();
+}
+
+static void ega_write_char(int x, int y, int ch, int color, int bg_color) {
+	unsigned short att = (ansi_to_vga[bg_color] << 12) | (ansi_to_vga[color] << 8);
+	unsigned short *where = (unsigned short*)(mmu_map_from_physical(0xB8000)) + (y * 80 + x);
+	*where = (ch & 0xFF) | att;
+}
+
+static int ega_get_width(void) { return 80; }
+static int ega_get_height(void) { return 25; }
+static void ega_get_cursor_adj(int *x, int *y) {
+	*x = 820;
+	*y = 2621;
+}
+
+static void ega_scroll_terminal(void) {
+	memmove(mmu_map_from_physical(0xB8000), (char*)mmu_map_from_physical(0xB8000) + sizeof(unsigned short) * 80, sizeof(unsigned short) * (80 * 24));
+	memset((char*)mmu_map_from_physical(0xB8000) + sizeof(unsigned short) * (80 * 24), 0x00, 80 * sizeof(unsigned short));
+}
+
+static void fbterm_init_ega(void) {
+	write_char = ega_write_char;
+	get_width = ega_get_width;
+	get_height = ega_get_height;
+	scroll_terminal = ega_scroll_terminal;
+	get_cursor_adj = ega_get_cursor_adj;
+}
+
+static void cursor_update(void) {
+	if (x >= get_width()) {
+		x = 0;
+		y++;
+	}
+	if (y >= get_height()) {
+		if (fbterm_scroll) {
+			y--;
+			scroll_terminal();
+		} else {
+			y = 0;
+		}
+	}
+}
+
+static void process_char(char ch) {
+	if (term_state == 1) {
+		if (ch == '[') {
+			term_buf_c = 0;
+			term_buf[term_buf_c] = '\0';
+			term_state = 2;
+		} else {
+			term_state = 0;
+			process_char(ch);
+		}
+		return;
+	} else if (term_state == 2) {
+		if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
+			/* do the thing */
+			switch (ch) {
+				case 'm': {
+					char * arg = &term_buf[0];
+					char * next;
+					int isBold = 0;
+					do {
+						next = strchr(arg, ';');
+						if (next) { *next = '\0'; next++; }
+						int asInt = atoi(arg);
+						if (asInt == 0) {
+							fg_color = FG_COLOR;
+							bg_color = BG_COLOR;
+							isBold = 0;
+						} else if (asInt == 1) {
+							isBold = 1;
+						} else if (asInt == 22) {
+							fg_color = FG_COLOR;
+							isBold = 0;
+						} else if (asInt >= 30 && asInt <= 37) {
+							fg_color = asInt-30 + (isBold ? 8 : 0);
+						} else if (asInt >= 90 && asInt <= 97) {
+							fg_color = asInt-90 + 8;
+						} else if (asInt >= 40 && asInt <= 47) {
+							bg_color = asInt-40 + (isBold ? 8 : 0);
+						} else if (asInt >= 100 && asInt <= 107) {
+							bg_color = asInt-100 + 8;
+						} else if (asInt == 38) {
+							fg_color = FG_COLOR;
+						} else if (asInt == 48) {
+							bg_color = BG_COLOR;
+						} else if (asInt == 7) {
+							uint32_t tmp = fg_color;
+							fg_color = bg_color;
+							bg_color = tmp;
+						}
+						arg = next;
+					} while (arg);
+					break;
+				}
+				case 'G': {
+					/* Set cursor column */
+					x = atoi(term_buf) - 1;
+					break;
+				}
+				case 'K': {
+					if (atoi(term_buf) == 0) {
+						for (int i = x; i < get_width(); ++i) {
+							write_char(i,y,' ',fg_color,bg_color);
+						}
+					}
+					break;
+				}
+			}
+			term_state = 0;
+		} else {
+			term_buf[term_buf_c++] = ch;
+			term_buf[term_buf_c] = '\0';
+		}
+		return;
+	} else if (ch == '\033') {
+		term_state = 1;
+		return;
+	}
+
+	write_char(x,y,' ',fg_color,bg_color);
+	switch (ch) {
+		case '\n':
+			x = 0;
+			y++;
+			break;
+		case '\r':
+			x = 0;
+			break;
+		case '\b':
+			if (x) {
+				x--;
+				write_char(x,y,' ',fg_color,bg_color);
+			}
+			break;
+		default:
+			if ((unsigned int)ch > 127) return;
+			write_char(x,y,ch,fg_color,bg_color);
+			x++;
+			break;
+	}
+	cursor_update();
+}
+
+static size_t (*previous_writer)(size_t,uint8_t*) = NULL;
+
+size_t fbterm_write(size_t size, uint8_t *buffer) {
+	if (!buffer) return 0;
+	for (unsigned int i = 0; i < size; ++i) {
+		process_char(buffer[i]);
+	}
+
+	if (previous_writer) previous_writer(size,buffer);
+	return size;
+}
+
+static fs_node_t * vga_text_device = NULL;
+
+static int vga_width_override = 0;
+static int vga_height_override = 0;
+
+static int vga_width(void) {
+	return vga_width_override ? vga_width_override : get_width();
+}
+
+static int vga_height(void) {
+	return vga_height_override ? vga_height_override : get_height();
+}
+
+static ssize_t write_vga_emul(fs_node_t * node, off_t offset, size_t size, uint8_t *buffer) {
+	if (offset < 0) return -EIO;
+	if (size % 2 || offset % 2) return -EIO;
+	size_t written = 0;
+
+	int width  = vga_width();
+	int height = vga_height();
+
+	while (size >= 2) {
+		if (offset >= (long)sizeof(unsigned short) * width * height - 1) break;
+		int row = (offset / 2) / width;
+		int col = (offset / 2) % width;
+
+		unsigned char flags = buffer[1];
+		write_char(col, row, *buffer, ansi_to_vga[flags&0xF], ansi_to_vga[flags>>4]);
+
+		offset += 2;
+		buffer += 2;
+		written += 2;
+		size -= 2;
+	}
+
+	return written;
+}
+
+static int ioctl_vga_emul(fs_node_t * node, unsigned long request, void * argp) {
+	switch (request) {
+		case IO_VID_WIDTH:
+			/* Get framebuffer width */
+			if (!mmu_validate_user_pointer(argp, sizeof(size_t), MMU_PTR_WRITE)) return -EFAULT;
+			*((size_t *)argp) = vga_width();
+			return 0;
+		case IO_VID_HEIGHT:
+			/* Get framebuffer height */
+			if (!mmu_validate_user_pointer(argp, sizeof(size_t), MMU_PTR_WRITE)) return -EFAULT;
+			*((size_t *)argp) = vga_height();
+			return 0;
+		case IO_VGA_MOUSE_ADJ:
+			if (!mmu_validate_user_pointer(argp, sizeof(int) * 2, MMU_PTR_WRITE)) return -EFAULT;
+			get_cursor_adj(&((int*)argp)[0], &((int*)argp)[1]);
+			return 0;
+		default:
+			return -ENOTTY;
+	}
+}
+
+static void vga_text_init(void) {
+	vga_text_device = calloc(sizeof(fs_node_t), 1);
+	snprintf(vga_text_device->name, 100, "vga0");
+	vga_text_device->length = 0;
+	vga_text_device->flags  = FS_BLOCKDEVICE;
+	vga_text_device->mask   = 0660;
+	vga_text_device->ioctl  = ioctl_vga_emul;
+	vga_text_device->write  = write_vga_emul;
+	vfs_mount("/dev/vga0", vga_text_device, "vgatext", "");
+}
+
+
+void fbterm_initialize(void) {
+	if (lfb_resolution_x) {
+		if (args_present("fbterm-scroll")) {
+			fbterm_scroll = 1;
+		}
+		fbterm_init_framebuffer();
+		if (args_present("emulvga")) {
+			char * arg = args_value("emulvga");
+			if (arg) {
+				char * x = strchr(arg,'x');
+				if (x) {
+					*x = '\0';
+					vga_width_override = atoi(arg);
+					vga_height_override = atoi(x+1);
+				}
+			}
+			vga_text_init();
+		}
+	} else {
+#ifdef __x86_64__
+		fbterm_scroll = 1;
+		fbterm_init_ega();
+		vga_text_init();
+#else
+		return;
+#endif
+	}
+
+	previous_writer = printf_output;
+	printf_output = fbterm_write;
+	console_set_output(fbterm_write);
+
+	dprintf("fbterm: Generic framebuffer text output enabled.\n");
+}

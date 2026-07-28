@@ -1,0 +1,1255 @@
+/**
+ * @brief Cascading graphical menu library.
+ *
+ * C reimplementation of the original Python menu library.
+ * Used to provide menu bars and the applications menu.
+ *
+ * @copyright
+ * This file is part of ToaruOS and is released under the terms
+ * of the NCSA / University of Illinois License - see LICENSE.md
+ * Copyright (C) 2018-2021 K. Lange
+ */
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <math.h>
+#include <sys/types.h>
+#include <dlfcn.h>
+
+#include <toaru/yutani.h>
+#include <toaru/graphics.h>
+#include <toaru/hashmap.h>
+#include <toaru/list.h>
+#include <toaru/icon_cache.h>
+#include <toaru/text.h>
+#include <toaru/markup_text.h>
+
+#include <toaru/menu.h>
+#include <razion/theme.h>
+
+#define MENU_ENTRY_HEIGHT 24
+#define MENU_BACKGROUND RAZION_SURFACE
+#define MENU_ICON_SIZE 16
+
+#define HILIGHT_BORDER_TOP RAZION_ACCENT
+#define HILIGHT_GRADIENT_TOP RAZION_SELECTION
+#define HILIGHT_GRADIENT_BOTTOM RAZION_SELECTION
+#define HILIGHT_BORDER_BOTTOM RAZION_ACCENT
+
+#define MENU_ENTRY_FLAGS_DISABLED 0x0001
+
+static hashmap_t * menu_windows = NULL;
+static yutani_t * my_yctx = NULL;
+
+static struct MenuList * hovered_menu = NULL;
+
+int menu_definitely_close(struct MenuList * menu);
+
+__attribute__((constructor))
+static void _init_menus(void) {
+	menu_windows = hashmap_create_int(10);
+	markup_text_init();
+}
+
+hashmap_t * menu_get_windows_hash(void) {
+	return menu_windows;
+}
+
+static int string_width(const char * s) {
+	return markup_string_width(s);
+}
+
+static int draw_string(gfx_context_t * ctx, int x, int y, uint32_t color, const char * s) {
+	return markup_draw_string(ctx,x,y+13,s,color);
+}
+
+static int _menu_is_disabled(struct MenuEntry * entry);
+
+void _menu_draw_MenuEntry_Normal(gfx_context_t * ctx, struct MenuEntry * self, int offset) {
+	struct MenuEntry_Normal * _self = (struct MenuEntry_Normal *)self;
+
+	_self->offset = offset;
+
+	/* Background gradient */
+	if (!_menu_is_disabled(self) && _self->hilight) {
+		draw_line(ctx, 1, _self->width-2, offset, offset, HILIGHT_BORDER_TOP);
+		draw_line(ctx, 1, _self->width-2, offset + _self->height - 1, offset + _self->height - 1, HILIGHT_BORDER_BOTTOM);
+		for (int i = 1; i < self->height-1; ++i) {
+			int thing = ((i - 1) * 256) / (_self->height - 2);
+			if (thing > 255) thing = 255;
+			if (thing < 0) thing = 0;
+			uint32_t c = interp_colors(HILIGHT_GRADIENT_TOP, HILIGHT_GRADIENT_BOTTOM, thing);
+			draw_line(ctx, 1, self->width-2, offset + i, offset + i, c);
+		}
+	}
+
+	/* Icon */
+	if (_self->icon) {
+		sprite_t * icon = icon_get_16(_self->icon);
+		if (icon->width == MENU_ICON_SIZE) {
+			if (_menu_is_disabled(self)) {
+				draw_sprite_alpha(ctx, icon, 4, offset + 2, 0.5);
+			} else {
+				draw_sprite(ctx, icon, 4, offset + 2);
+			}
+		} else {
+			if (_menu_is_disabled(self)) {
+				draw_sprite_scaled_alpha(ctx, icon, 4, offset + 2, MENU_ICON_SIZE, MENU_ICON_SIZE, 0.5);
+			} else {
+				draw_sprite_scaled(ctx, icon, 4, offset + 2, MENU_ICON_SIZE, MENU_ICON_SIZE);
+			}
+		}
+	}
+
+	/* Foreground text color */
+	uint32_t color = _menu_is_disabled(self) ? RAZION_TEXT_SECONDARY : RAZION_TEXT_PRIMARY;
+
+	/* Draw title */
+	draw_string(ctx, 22, offset + 1, color, _self->title);
+}
+
+void _menu_focus_MenuEntry_Normal(struct MenuEntry * self, int focused) {
+	if (focused) {
+		if (self->_owner && self->_owner->child) {
+			menu_definitely_close(self->_owner->child);
+			self->_owner->child = NULL;
+		}
+	}
+}
+
+void _menu_activate_MenuEntry_Normal(struct MenuEntry * self, int flags) {
+	struct MenuEntry_Normal * _self = (struct MenuEntry_Normal *)self;
+
+	if (_menu_is_disabled(self)) return; /* Do nothing */
+
+	list_t * menu_keys = hashmap_keys(menu_windows);
+	hovered_menu = NULL;
+	foreach(_key, menu_keys) {
+		yutani_window_t * window = hashmap_get(menu_windows, (void*)(uintptr_t)_key->value);
+		if (window) {
+			struct MenuList * menu = window->user_data;
+			menu_definitely_close(menu);
+			if (menu->parent && menu->parent->child == menu) {
+				menu->parent->child = NULL;
+			}
+		}
+	}
+
+	list_free(menu_keys);
+	free(menu_keys);
+
+	if (_self->callback) {
+		_self->callback(_self);
+	}
+}
+
+static struct MenuEntryVTable _menu_vtable_MenuEntry_Normal = {
+	.methods = 3,
+	.renderer = _menu_draw_MenuEntry_Normal,
+	.focus_change = _menu_focus_MenuEntry_Normal,
+	.activate = _menu_activate_MenuEntry_Normal,
+};
+
+struct MenuEntry * menu_create_normal(const char * icon, const char * action, const char * title, void (*callback)(struct MenuEntry *)) {
+	struct MenuEntry_Normal * out = calloc(1,sizeof(struct MenuEntry_Normal));
+
+	out->_type = MenuEntry_Normal;
+	out->height = MENU_ENTRY_HEIGHT;
+	out->hilight = 0;
+	out->vtable = &_menu_vtable_MenuEntry_Normal;
+	out->icon = icon ? strdup(icon) : NULL;
+	out->title = strdup(title);
+	out->action = action ? strdup(action) : NULL;
+	out->callback = callback;
+
+	out->rwidth = 50 + string_width(out->title);
+
+	return (struct MenuEntry *)out;
+}
+
+void _menu_draw_MenuEntry_Toggle(gfx_context_t * ctx, struct MenuEntry * self, int offset) {
+	_menu_draw_MenuEntry_Normal(ctx,self,offset);
+	struct MenuEntry_Toggle * _self = (struct MenuEntry_Toggle *)self;
+
+	if (_self->set) {
+		sprite_t * check_box = icon_get_16("check");
+		uint32_t color = _menu_is_disabled(self) ? RAZION_TEXT_SECONDARY : RAZION_TEXT_PRIMARY;
+		draw_sprite_alpha_paint(ctx, check_box, 4, offset + 2, 1.0, color);
+	}
+}
+static struct MenuEntryVTable _menu_vtable_MenuEntry_Toggle = {
+	.methods = 3,
+	.renderer = _menu_draw_MenuEntry_Toggle, /* Only the renderer differs; users must manage toggle state */
+	.focus_change = _menu_focus_MenuEntry_Normal,
+	.activate = _menu_activate_MenuEntry_Normal,
+};
+
+struct MenuEntry * menu_create_toggle(const char * action, const char * title, int set, void (*callback)(struct MenuEntry *)) {
+	/* Reuse the initializer for the normal one, assuming with no icon. */
+	struct MenuEntry_Toggle * out = (struct MenuEntry_Toggle*)menu_create_normal(NULL, action, title, callback);
+	if (!out) return out;
+	out = realloc(out, sizeof(struct MenuEntry_Toggle));
+
+	out->_type = MenuEntry_Toggle;
+	out->vtable = &_menu_vtable_MenuEntry_Toggle;
+
+	/* And just set our status */
+	out->set = set;
+	return out;
+}
+
+void _menu_draw_MenuEntry_Submenu(gfx_context_t * ctx, struct MenuEntry * self, int offset) {
+
+	struct MenuEntry_Submenu * _self = (struct MenuEntry_Submenu *)self;
+	int h = _self->hilight;
+	if (_self->_owner && _self->_my_child && _self->_owner->child == _self->_my_child && !_self->_my_child->closed) {
+		_self->hilight = 1;
+	}
+	_menu_draw_MenuEntry_Normal(ctx,self,offset);
+
+	/* Draw the tick on the right side to indicate this is a submenu */
+	uint32_t color = _menu_is_disabled(self) ? RAZION_TEXT_SECONDARY : RAZION_TEXT_PRIMARY;
+	sprite_t * tick = icon_get_16("menu-tick");
+	draw_sprite_alpha_paint(ctx, tick, _self->width - 16, offset + 2, 1.0, color);
+	_self->hilight = h;
+}
+
+void _menu_focus_MenuEntry_Submenu(struct MenuEntry * self, int focused) {
+	if (focused) {
+		self->vtable->activate(self, focused);
+	}
+}
+
+void _menu_activate_MenuEntry_Submenu(struct MenuEntry * self, int focused) {
+	struct MenuEntry_Submenu * _self = (struct MenuEntry_Submenu *)self;
+
+	if (_menu_is_disabled(self)) return; /* Do nothing */
+
+	if (_self->_owner && _self->_owner->set) {
+		/* Show a menu */
+		struct MenuList * new_menu = menu_set_get_menu(_self->_owner->set, (char *)_self->action);
+		if (_self->_owner->child && _self->_owner->child != new_menu) {
+			menu_definitely_close(_self->_owner->child);
+			_self->_owner->child = NULL;
+		}
+		new_menu->parent = _self->_owner;
+		new_menu->parent->child = new_menu;
+		_self->_my_child = new_menu;
+		if (new_menu->closed) {
+			new_menu->main_window = new_menu->parent->main_window;
+			menu_prepare(new_menu, _self->_owner->window->ctx);
+			int offset_x = _self->_owner->window->width - 2;
+			int offset_y = _self->offset - 4;
+			if (_self->_owner->window->width + _self->_owner->window->x - 2 + new_menu->window->width > _self->_owner->window->ctx->display_width) {
+				offset_x = 2 - new_menu->window->width;
+			}
+			if (_self->_owner->window->y + offset_y + new_menu->window->height >  _self->_owner->window->ctx->display_height) {
+				offset_y = _self->_owner->window->ctx->display_height - _self->_owner->window->y - new_menu->window->height;
+			}
+			yutani_window_move_relative(_self->_owner->window->ctx, new_menu->window, _self->_owner->window,
+				offset_x, offset_y);
+			yutani_flip(_self->_owner->window->ctx, new_menu->window);
+		}
+	}
+
+}
+
+static struct MenuEntryVTable _menu_vtable_MenuEntry_Submenu = {
+	.methods = 3,
+	.renderer = _menu_draw_MenuEntry_Submenu,
+	.focus_change = _menu_focus_MenuEntry_Submenu,
+	.activate = _menu_activate_MenuEntry_Submenu,
+};
+
+struct MenuEntry * menu_create_submenu(const char * icon, const char * action, const char * title) {
+	struct MenuEntry_Submenu * out = calloc(1,sizeof(struct MenuEntry_Submenu));
+
+	out->_type = MenuEntry_Submenu;
+	out->height = MENU_ENTRY_HEIGHT;
+	out->hilight = 0;
+	out->vtable = &_menu_vtable_MenuEntry_Submenu;
+	out->icon = icon ? strdup(icon) : NULL;
+	out->title = strdup(title);
+	out->action = action ? strdup(action) : NULL;
+
+	out->rwidth = 50 + string_width(out->title);
+
+	return (struct MenuEntry *)out;
+}
+
+void _menu_draw_MenuEntry_Separator(gfx_context_t * ctx, struct MenuEntry * self, int offset) {
+	self->offset = offset;
+	draw_line(ctx, 2, self->width-4, offset+3, offset+3, rgb(178,178,178));
+	draw_line(ctx, 2, self->width-5, offset+4, offset+4, rgb(250,250,250));
+}
+
+void _menu_focus_MenuEntry_Separator(struct MenuEntry * self, int focused) {
+	if (focused) {
+		if (self->_owner && self->_owner->child) {
+			menu_definitely_close(self->_owner->child);
+			self->_owner->child = NULL;
+		}
+	}
+}
+
+void _menu_activate_MenuEntry_Separator(struct MenuEntry * self, int focused) {
+
+}
+
+static struct MenuEntryVTable _menu_vtable_MenuEntry_Separator = {
+	.methods = 3,
+	.renderer = _menu_draw_MenuEntry_Separator,
+	.focus_change = _menu_focus_MenuEntry_Separator,
+	.activate = _menu_activate_MenuEntry_Separator,
+};
+
+struct MenuEntry * menu_create_separator(void) {
+	struct MenuEntry_Separator * out = calloc(1,sizeof(struct MenuEntry_Separator));
+
+	out->_type = MenuEntry_Separator;
+	out->height = 6;
+	out->hilight = 0;
+	out->rwidth = 10; /* at least a bit please */
+	out->vtable = &_menu_vtable_MenuEntry_Separator;
+
+	return (struct MenuEntry *)out;
+}
+
+void menu_update_title(struct MenuEntry * self, char * new_title) {
+
+	if (self->_type == MenuEntry_Normal) {
+		struct MenuEntry_Normal * _self = (struct MenuEntry_Normal *)self;
+		if (_self->title) {
+			free((void*)_self->title);
+		}
+		_self->title = strdup(new_title);
+		_self->rwidth = 50 + string_width(_self->title);
+	} else if (self->_type == MenuEntry_Submenu) {
+		struct MenuEntry_Submenu * _self = (struct MenuEntry_Submenu *)self;
+		if (_self->title) {
+			free((void*)_self->title);
+		}
+		_self->title = strdup(new_title);
+		_self->rwidth = 50 + string_width(_self->title);
+	}
+}
+
+void menu_update_icon(struct MenuEntry * self, char * newIcon) {
+	switch (self->_type) {
+		case MenuEntry_Submenu:
+		case MenuEntry_Normal: {
+			struct MenuEntry_Normal * _self = (struct MenuEntry_Normal *)self;
+			if (_self->icon)   free(_self->icon);
+			_self->icon = newIcon ? strdup(newIcon) : NULL;
+			break;
+		}
+		case MenuEntry_Toggle: /* Toggle should not be able to set icon */
+		default:
+			break;
+	}
+}
+
+void menu_update_toggle_state(struct MenuEntry * self, int state) {
+	switch (self->_type) {
+		case MenuEntry_Toggle: {
+			struct MenuEntry_Toggle * _self = (struct MenuEntry_Toggle *)self;
+			_self->set = state;
+			break;
+		}
+		default:
+			break;
+	}
+}
+
+void menu_update_enabled(struct MenuEntry * self, int state) {
+	switch (self->_type) {
+		case MenuEntry_Toggle:
+		case  MenuEntry_Submenu:
+		case MenuEntry_Normal: {
+			unsigned long flags = ((struct MenuEntry_Normal*)self)->flags & ~MENU_ENTRY_FLAGS_DISABLED;
+			if (!state) flags |= MENU_ENTRY_FLAGS_DISABLED;
+			((struct MenuEntry_Normal*)self)->flags = flags;
+			break;
+		}
+		default:
+			break;
+	}
+}
+
+void menu_free_entry(struct MenuEntry * self) {
+	switch (self->_type) {
+		case MenuEntry_Toggle:
+		case  MenuEntry_Submenu:
+		case MenuEntry_Normal: {
+			struct MenuEntry_Normal * _self = (struct MenuEntry_Normal *)self;
+			if (_self->icon)   free(_self->icon);
+			if (_self->title)  free(_self->title);
+			if (_self->action) free(_self->action);
+			break;
+		}
+		default:
+			break;
+	}
+	free(self);
+}
+
+static int _close_enough(struct yutani_msg_window_mouse_event * me) {
+	if (me->command == YUTANI_MOUSE_EVENT_RAISE && sqrt(pow(me->new_x - me->old_x, 2) + pow(me->new_y - me->old_y, 2)) < 10) {
+		return 1;
+	}
+	return 0;
+}
+
+static char read_buf[1024];
+static size_t available = 0;
+static size_t offset = 0;
+static size_t read_from = 0;
+static char * read_line(FILE * f, char * out, ssize_t len) {
+	while (len > 0) {
+		if (available == 0) {
+			if (offset == 1024) {
+				offset = 0;
+			}
+			size_t r = read(fileno(f), &read_buf[offset], 1024 - offset);
+			read_from = offset;
+			available = r;
+			offset += available;
+		}
+
+		if (available == 0) {
+			*out = '\0';
+			return out;
+		}
+
+		while (read_from < offset && len > 0) {
+			*out = read_buf[read_from];
+			len--;
+			read_from++;
+			available--;
+			if (*out == '\n') {
+				return out;
+			}
+			out++;
+		}
+	}
+
+	return out;
+}
+
+void menu_calculate_dimensions(struct MenuList * menu, int * height, int * width) {
+	list_t * list = menu->entries;
+	*width = 0;
+	*height = (menu->flags & MENU_FLAG_BUBBLE) ? 16 : 8; /* TODO top and height */
+	foreach(node, list) {
+		struct MenuEntry * entry = node->value;
+		*height += entry->height;
+		if (*width < entry->rwidth) {
+			*width = entry->rwidth;
+		}
+	}
+	/* Go back through and update actual widths */
+	foreach(node, list) {
+		struct MenuEntry * entry = node->value;
+		entry->width = *width;
+	}
+}
+
+struct MenuList * menu_set_get_root(struct MenuSet * menu) {
+	return (void*)hashmap_get(menu->_menus,"_");
+}
+
+struct MenuList * menu_set_get_menu(struct MenuSet * menu, char * submenu) {
+	return (void*)hashmap_get(menu->_menus, submenu);
+}
+
+void menu_insert(struct MenuList * menu, struct MenuEntry * entry) {
+	list_insert(menu->entries, entry);
+	entry->_owner = menu;
+}
+
+struct MenuList * menu_create(void) {
+	struct MenuList * p = malloc(sizeof(struct MenuList));
+	p->entries = list_create();
+	p->ctx = NULL;
+	p->window = NULL;
+	p->set = NULL;
+	p->child = NULL;
+	p->_bar = NULL;
+	p->parent = NULL;
+	p->closed = 1;
+	p->flags = 0;
+	p->tail_offset = 0;
+	p->main_window = 0;
+	return p;
+}
+
+struct MenuSet * menu_set_create(void) {
+	struct MenuSet * _out = malloc(sizeof(struct MenuSet));
+	_out->_menus = hashmap_create(10);
+	return _out;
+}
+
+void menu_set_insert(struct MenuSet * set, char * action, struct MenuList * menu) {
+	hashmap_set(set->_menus, action, menu);
+	menu->set = set;
+}
+
+struct MenuSet * menu_set_from_description(const char * path, void (*callback)(struct MenuEntry *)) {
+	FILE * f;
+	if (!strcmp(path,"-")) {
+		f = stdin;
+	} else {
+		f = fopen(path,"r");
+	}
+
+	if (!f) {
+		return NULL;
+	}
+
+	struct MenuSet * _out = malloc(sizeof(struct MenuSet));
+	hashmap_t * out = hashmap_create(10);
+	_out->_menus = out;
+
+	struct MenuList * current_menu = NULL;
+
+	/* Read through the file */
+	char line[256];
+	while (1) {
+		memset(line, 0, 256);
+		read_line(f, line, 256);
+		if (!*line) break;
+
+		if (line[strlen(line)-1] == '\n') {
+			line[strlen(line)-1] = '\0';
+		}
+
+		if (!*line) continue; /* skip blank */
+
+		if (*line == ':') {
+			/* New menu */
+			struct MenuList * p = menu_create();
+			p->set = _out;
+			hashmap_set(out, line+1, p);
+			current_menu = p;
+		} else if (*line == '#') {
+			/* Comment */
+			continue;
+		} else if (*line == '-') {
+			if (!current_menu) {
+				fprintf(stderr, "Tried to add separator with no active menu.\n");
+				goto failure;
+			}
+			menu_insert(current_menu, menu_create_separator());
+		} else if (*line == '&') {
+			if (!current_menu) {
+				fprintf(stderr, "Tried to add submenu with no active menu.\n");
+				goto failure;
+			}
+			char * action = line+1;
+			char * icon = strstr(action,",");
+			if (!icon) {
+				fprintf(stderr, "Malformed line in submenu: no icon\n");
+				goto failure;
+			}
+			*icon = '\0';
+			icon++;
+			char * title = strstr(icon,",");
+			if (!title) {
+				fprintf(stderr, "Malformed line in submenu: no title\n");
+				goto failure;
+			}
+			*title = '\0';
+			title++;
+			menu_insert(current_menu, menu_create_submenu(icon,action,title));
+		} else {
+			if (!current_menu) {
+				fprintf(stderr, "Tried to add item with no active menu.\n");
+				goto failure;
+			}
+			char * action = line;
+			char * icon = strstr(action,",");
+			if (!icon) {
+				fprintf(stderr, "Malformed line in action: no icon\n");
+				goto failure;
+			}
+			*icon = '\0';
+			icon++;
+			char * title = strstr(icon,",");
+			if (!title) {
+				fprintf(stderr, "Malformed line in action: no title\n");
+				goto failure;
+			}
+			*title = '\0';
+			title++;
+			menu_insert(current_menu, menu_create_normal(icon,action,title,callback));
+		}
+	}
+
+	if (f != stdin) fclose(f);
+	return _out;
+
+failure:
+	fprintf(stderr, "malformed description file\n");
+	if (f != stdin) fclose(f);
+	free(out);
+	return NULL;
+}
+
+static void _menu_redraw(yutani_window_t * menu_window, yutani_t * yctx, struct MenuList * menu, int expose) {
+
+	gfx_context_t * ctx = menu->ctx;
+	list_t * entries = menu->entries;
+	/* Window background */
+	if (menu->flags & MENU_FLAG_BUBBLE) {
+		draw_fill(ctx, rgba(0,0,0,0));
+		draw_rounded_rectangle(ctx, 0, 6, ctx->width, ctx->height - 6, 6, RAZION_BORDER);
+		draw_rounded_rectangle(ctx, 1, 7, ctx->width-2, ctx->height - 8, 5, MENU_BACKGROUND);
+
+		/* Figure out where to draw the tail */
+		int tail_left = 0;
+		/* Do we have a set tail? */
+		#define TAIL_BOUND 8
+		if (menu->flags & MENU_FLAG_TAIL_POSITION) {
+			tail_left = (menu->tail_offset < TAIL_BOUND) ? TAIL_BOUND : (menu->tail_offset > ctx->width - TAIL_BOUND) ? (ctx->width - TAIL_BOUND) : menu->tail_offset;
+		} else if (menu->flags & MENU_FLAG_BUBBLE_LEFT) {
+			tail_left = 16;
+		} else if (menu->flags & MENU_FLAG_BUBBLE_RIGHT) {
+			tail_left = ctx->width - 16;
+		} else if (menu->flags & MENU_FLAG_BUBBLE_CENTER) {
+			tail_left = ctx->width / 2;
+		}
+		for (int i = 1; i < 7; ++i) {
+			draw_line(ctx, tail_left - i, tail_left + i, i, i, MENU_BACKGROUND);
+		}
+		draw_line_aa(ctx, tail_left - 6, tail_left, 6, 0, RAZION_BORDER, 0.5);
+		draw_line_aa(ctx, tail_left + 6, tail_left, 6, 0, RAZION_BORDER, 0.5);
+	} else {
+		draw_fill(ctx, MENU_BACKGROUND);
+
+		/* Window border */
+		draw_line(ctx, 0, ctx->width-1, 0, 0, RAZION_BORDER);
+		draw_line(ctx, 0, 0, 0, ctx->height-1, RAZION_BORDER);
+		draw_line(ctx, ctx->width-1, ctx->width-1, 0, ctx->height-1, RAZION_BORDER);
+		draw_line(ctx, 0, ctx->width-1, ctx->height-1, ctx->height-1, RAZION_BORDER);
+	}
+
+	/* Draw menu entries */
+	int offset = (menu->flags & MENU_FLAG_BUBBLE) ? 12 : 4;
+	foreach(node, entries) {
+		struct MenuEntry * entry = node->value;
+		if (entry->vtable->methods >= 1 && entry->vtable->renderer) {
+			entry->vtable->renderer(ctx, entry, offset);
+		}
+
+		offset += entry->height;
+	}
+
+	flip(ctx);
+
+	if (expose) {
+		yutani_flip(yctx, menu_window);
+	}
+}
+
+void menu_prepare(struct MenuList * menu, yutani_t * yctx) {
+	/* Calculate window dimensions */
+	int height, width;
+	menu_calculate_dimensions(menu,&height, &width);
+
+	my_yctx = yctx;
+
+	menu->closed = 0;
+
+	/* Create window */
+
+	yutani_window_t * menu_window = yutani_window_create_flags(yctx, width, height,
+		((menu->flags & MENU_FLAG_BUBBLE) ? YUTANI_WINDOW_FLAG_ALT_ANIMATION : YUTANI_WINDOW_FLAG_NO_ANIMATION)
+		| YUTANI_WINDOW_FLAG_DISALLOW_DRAG
+		| YUTANI_WINDOW_FLAG_DISALLOW_RESIZE
+		| YUTANI_WINDOW_FLAG_PARENT_WID,
+		menu->main_window);
+	yutani_set_stack(yctx, menu_window, YUTANI_ZORDER_MENU);
+	if (menu->ctx) {
+		reinit_graphics_yutani(menu->ctx, menu_window);
+	} else {
+		menu->ctx = init_graphics_yutani_double_buffer(menu_window);
+	}
+
+	menu_window->user_data = menu;
+	menu->window = menu_window;
+
+	_menu_redraw(menu_window, yctx, menu, 0);
+
+	hashmap_set(menu_windows, (void*)(uintptr_t)menu_window->wid, menu_window);
+}
+
+void menu_show_at(struct MenuList * menu, yutani_window_t * parent, int x, int y) {
+	menu->main_window = parent;
+	menu_prepare(menu, parent->ctx);
+
+	if (parent->x + x + menu->window->width > parent->ctx->display_width) x -= menu->window->width;
+	if (parent->y + y + menu->window->height > parent->ctx->display_height) y -= menu->window->height;
+
+	yutani_window_move_relative(parent->ctx, menu->window, parent, x, y);
+	yutani_flip(parent->ctx, menu->window);
+}
+
+int menu_has_eventual_child(struct MenuList * root, struct MenuList * child) {
+
+	if (!child) return 0;
+	if (root == child) return 1;
+
+	struct MenuList * candidate = root->child;
+
+	while (candidate && candidate != child) {
+		if (candidate == root->child) {
+			return 1;
+		}
+		candidate = root->child;
+	}
+
+	return (candidate == child);
+}
+
+int menu_definitely_close(struct MenuList * menu) {
+
+	if (menu->child) {
+		menu_definitely_close(menu->child);
+		menu->child = NULL;
+	}
+
+	if (menu->closed) {
+		return 0;
+	}
+
+	/* if focused_widget, leave focus on widget */
+	foreach(node, menu->entries) {
+		struct MenuEntry * entry = node->value;
+		entry->hilight = 0;
+	}
+	menu->closed = 1;
+	yutani_wid_t wid = menu->window->wid;
+	yutani_close(menu->window->ctx, menu->window);
+	menu->window = NULL;
+	menu->main_window = NULL;
+	hashmap_remove(menu_windows, (void*)(uintptr_t)wid);
+
+	return 0;
+}
+
+int menu_leave(struct MenuList * menu) {
+
+	if (!hovered_menu) {
+		while (menu->parent) {
+			menu = menu->parent;
+		}
+		menu_definitely_close(menu);
+		return 0;
+	}
+
+	if (!menu_has_eventual_child(menu, hovered_menu)) {
+		/* Get all menus */
+		list_t * menu_keys = hashmap_keys(menu_windows);
+		foreach(_key, menu_keys) {
+			yutani_window_t * window = hashmap_get(menu_windows, (void *)(uintptr_t)_key->value);
+			if (window) {
+				struct MenuList * menu = window->user_data;
+				if (!hovered_menu || (menu != hovered_menu->child && !menu_has_eventual_child(menu, hovered_menu)))  {
+					menu_definitely_close(menu);
+					if (menu->parent && menu->parent->child == menu) {
+						menu->parent->child = NULL;
+					}
+				}
+			}
+		}
+
+		list_free(menu_keys);
+		free(menu_keys);
+	}
+
+	return 0;
+}
+
+static int _menu_is_disabled(struct MenuEntry * entry) {
+	switch (entry->_type) {
+		case MenuEntry_Toggle:
+		case MenuEntry_Submenu:
+		case MenuEntry_Normal:
+			return ((struct MenuEntry_Normal*)entry)->flags & MENU_ENTRY_FLAGS_DISABLED;
+		case MenuEntry_Separator:
+			return 1;
+		default:
+			return 0;
+	}
+}
+
+void menu_key_action(struct MenuList * menu, struct yutani_msg_key_event * me) {
+	if (me->event.action != KEY_ACTION_DOWN) return;
+
+	yutani_window_t * window = menu->window;
+	yutani_t * yctx = window->ctx;
+
+	hovered_menu = menu;
+
+	/* Find hilighted entry */
+	struct MenuEntry * hilighted = NULL;
+	struct MenuEntry * previous = NULL;
+	struct MenuEntry * next = NULL;
+	struct MenuEntry * first = NULL;
+	struct MenuEntry * last = NULL;
+	foreach(node, menu->entries) {
+		struct MenuEntry * entry = node->value;
+		if (!first && !_menu_is_disabled(entry)) {
+			first = entry;
+		}
+		if (!hilighted && entry->hilight) {
+			hilighted = entry;
+			continue;
+		}
+		if (!_menu_is_disabled(entry)) {
+			if (!next && hilighted) next = entry;
+			if (!hilighted) previous = entry;
+			last = entry;
+		}
+	}
+
+	if (me->event.keycode == KEY_ARROW_DOWN) {
+		if (hilighted) {
+			hilighted->hilight = 0;
+		}
+		hilighted = next ? next : first;
+		if (hilighted) hilighted->hilight = 1;
+		_menu_redraw(window,yctx,menu,1);
+	} else if (me->event.keycode == KEY_ARROW_UP) {
+		if (hilighted) {
+			hilighted->hilight = 0;
+		}
+		hilighted = previous ? previous : last;
+		if (hilighted) hilighted->hilight = 1;
+		_menu_redraw(window,yctx,menu,1);
+	} else if (me->event.keycode == KEY_ARROW_RIGHT) {
+		if (!hilighted) {
+			hilighted = menu->entries->head->value;
+		}
+		if (hilighted) {
+			hilighted->hilight = 1;
+			if (hilighted->_type == MenuEntry_Submenu) {
+				if (hilighted->vtable->methods >= 3 && hilighted->vtable->activate) {
+					hilighted->vtable->activate(hilighted, 0);
+				}
+				_menu_redraw(window,yctx,menu,1);
+			} else {
+				struct menu_bar * bar = NULL;
+				struct MenuList * p = menu;
+				do {
+					if (p->_bar) {
+						bar = p->_bar;
+						break;
+					}
+				} while ((p = p->parent));
+				if (bar) {
+					menu_definitely_close(p);
+					int active = (bar->active_entry_idx + 1 + bar->num_entries) % (bar->num_entries);
+					bar->active_entry = &bar->entries[active];
+					if (bar->redraw_callback) {
+						bar->redraw_callback(bar);
+					}
+					menu_bar_show_menu(yctx, bar->window, bar, -1, bar->active_entry);
+				} else {
+					_menu_redraw(window,yctx,menu,1);
+				}
+			}
+		}
+	} else if (me->event.key == '\n') {
+		if (!hilighted) {
+			hilighted = menu->entries->head->value;
+		}
+		if (hilighted) {
+			hilighted->hilight = 1;
+			if (hilighted->vtable->methods >= 3 && hilighted->vtable->activate) {
+				hilighted->vtable->activate(hilighted, 0);
+			}
+		}
+	} else if (me->event.keycode == KEY_ARROW_LEFT) {
+		if (menu->parent) {
+			hovered_menu = menu->parent;
+		} /* else previous from menu bar? */
+		menu_definitely_close(menu);
+		if (menu->_bar) {
+			int active = (menu->_bar->active_entry_idx - 1 + menu->_bar->num_entries) % (menu->_bar->num_entries);
+			menu->_bar->active_entry = &menu->_bar->entries[active];
+			if (menu->_bar->redraw_callback) {
+				menu->_bar->redraw_callback(menu->_bar);
+			}
+			menu_bar_show_menu(yctx, menu->_bar->window, menu->_bar, -1, menu->_bar->active_entry);
+		} else if (menu->parent && menu->parent->window) {
+			yutani_focus_window(yctx, menu->parent->window->wid);
+		}
+	} else if (me->event.keycode == KEY_ESCAPE) {
+		hovered_menu = NULL;
+		menu_leave(menu);
+	}
+}
+
+void menu_mouse_action(struct MenuList * menu, struct yutani_msg_window_mouse_event * me) {
+	yutani_window_t * window = menu->window;
+	yutani_t * yctx = window->ctx;
+
+	int offset = (menu->flags & MENU_FLAG_BUBBLE) ? 12 : 4;
+	int changed = 0;
+	foreach(node, menu->entries) {
+		struct MenuEntry * entry = node->value;
+		if (me->new_y >= offset && me->new_y < offset + entry->height &&
+				me->new_x >= 0 && me->new_x < entry->width) {
+			if (!entry->hilight) {
+				changed = 1;
+				entry->hilight = 1;
+				if (entry->vtable->methods >= 2 && entry->vtable->focus_change) {
+					entry->vtable->focus_change(entry, 1);
+				}
+			}
+			if (entry->vtable->methods >= 4 && entry->vtable->mouse_event) {
+				if (entry->vtable->mouse_event(entry, me)) {
+					_menu_redraw(window,yctx,menu,1);
+				}
+			} else if (me->command == YUTANI_MOUSE_EVENT_CLICK || _close_enough(me)) {
+				if (entry->vtable->methods >= 3 && entry->vtable->activate) {
+					entry->vtable->activate(entry, 0);
+				}
+			}
+		} else {
+			if (entry->hilight) {
+				changed = 1;
+				entry->hilight = 0;
+				if (entry->vtable->methods >= 2 && entry->vtable->focus_change) {
+					entry->vtable->focus_change(entry, 0);
+				}
+			}
+		}
+		offset += entry->height;
+	}
+	if (changed) {
+		_menu_redraw(window,yctx,menu,1);
+	}
+}
+
+void menu_force_redraw(struct MenuList * menu) {
+	yutani_window_t * window = menu->window;
+	yutani_t * yctx = window->ctx;
+	_menu_redraw(window,yctx,menu,1);
+}
+
+struct MenuList * menu_any_contains(int x, int y) {
+	struct MenuList * out = NULL;
+	list_t * menu_keys = hashmap_keys(menu_windows);
+	foreach(_key, menu_keys) {
+		yutani_window_t * window = hashmap_get(menu_windows, (void*)_key->value);
+		if (window) {
+			if (x >= (int)window->x && x < (int)window->x + (int)window->width && y >= (int)window->y && y < (int)window->y + (int)window->height) {
+				out = window->user_data;
+				break;
+
+			}
+		}
+	}
+
+	list_free(menu_keys);
+	free(menu_keys);
+
+	return out;
+}
+
+int menu_process_event(yutani_t * yctx, yutani_msg_t * m) {
+	if (m) {
+		switch (m->type) {
+			case YUTANI_MSG_KEY_EVENT:
+				{
+					struct yutani_msg_key_event * me = (void*)m->data;
+					if (hashmap_has(menu_windows, (void*)(uintptr_t)me->wid)) {
+						yutani_window_t * window = hashmap_get(menu_windows, (void *)(uintptr_t)me->wid);
+						struct MenuList * menu = window->user_data;
+						menu_key_action(menu, me);
+					}
+				}
+				break;
+			case YUTANI_MSG_WINDOW_MOUSE_EVENT:
+				{
+					struct yutani_msg_window_mouse_event * me = (void*)m->data;
+					if (hashmap_has(menu_windows, (void*)(uintptr_t)me->wid)) {
+						yutani_window_t * window = hashmap_get(menu_windows, (void *)(uintptr_t)me->wid);
+						struct MenuList * menu = window->user_data;
+						if (me->new_x >= 0 && me->new_x < (int)window->width && me->new_y >= 0 && me->new_y < (int)window->height) {
+							if (hovered_menu != menu)  {
+								hovered_menu = menu;
+							}
+						} else {
+							if (hovered_menu) {
+								struct MenuList * t = menu_any_contains(me->new_x + window->x, me->new_y + window->y);
+								if (t) {
+									hovered_menu = t;
+								} else {
+									hovered_menu = NULL;
+								}
+							}
+						}
+						menu_mouse_action(menu, me);
+
+					}
+				}
+				break;
+			case YUTANI_MSG_WINDOW_FOCUS_CHANGE:
+				{
+					struct yutani_msg_window_focus_change * me = (void*)m->data;
+					if (hashmap_has(menu_windows, (void*)(uintptr_t)me->wid)) {
+						yutani_window_t * window = hashmap_get(menu_windows, (void *)(uintptr_t)me->wid);
+						struct MenuList * menu = window->user_data;
+						if (!me->focused) {
+							/* XXX leave menu */
+							menu_leave(menu);
+							/* if root and not window.root.menus and window.root.focused */
+							return 1;
+						} else {
+							window->focused = me->focused;
+							/* Redraw? */
+						}
+					}
+				}
+				break;
+			default:
+				break;
+		}
+	}
+	return 0;
+}
+
+static void menu_bar_preflight(struct menu_bar * self, ssize_t * tabs, ssize_t * tab_width, ssize_t * extra) {
+	ssize_t w = 4;
+	struct menu_bar_entries * e = self->entries;
+	ssize_t tabcount = 0;
+
+	/* Figure out the size of elements before the first tab */
+	for (; e->title; e++) {
+		char * title = e->title;
+		if (*title == '\t' || *title == '\v') break;
+		w += string_width(title) + 11;
+	}
+
+	/* Figure out how many tabs there are. */
+	for (; e->title; e++) {
+		char * title = e->title;
+		if (*title != '\t' && *title != '\v') break;
+		tabcount++;
+	}
+
+	/* See if there are any elements after the tabs */
+	for (; e->title; e++) {
+		w += string_width(e->title) + 11;
+	}
+
+	if (w > self->width || !tabcount) {
+		*tab_width = 0; /* Tabs have no available space */
+		*tabs = 0; /* Inform caller they should skip any tabs the see. */
+		*extra = 0;
+		return;
+	}
+
+	*tabs = tabcount;
+	*tab_width = (self->width - w) / tabcount;
+	*extra = self->width - w - *tab_width * tabcount;
+}
+
+void menu_bar_render(struct menu_bar * self, gfx_context_t * ctx) {
+	int _x = self->x;
+	int _y = self->y;
+	int width = self->width;
+	int height = MENU_BAR_HEIGHT;
+
+	if (_x < 0) _x = 0;
+	if (_y < 0) _y = 0;
+	if (_x + width > ctx->width) width = ctx->width - _x;
+	if (_y + height > ctx->height) height = ctx->height - _y;
+
+	gfx_context_t * subctx = init_graphics_subregion(ctx, _x, _y, width, height);
+
+	uint32_t menu_bar_color = RAZION_SURFACE_SECONDARY;
+	draw_rectangle(subctx, 0, 0, width, height, menu_bar_color);
+
+	/* for each menu entry */
+	struct menu_bar_entries * e = self->entries;
+	if (!self->num_entries) {
+		while (e->title) {
+			e++;
+			self->num_entries++;
+		}
+		e = self->entries;
+	}
+
+	/* Preflight check of whether the tabs will actually fit or should render with their ->actions instead of ->titles */
+	ssize_t tabs, tab_width, extra;
+	menu_bar_preflight(self, &tabs, &tab_width, &extra);
+
+	int window_is_focused = self->window->focused || !hashmap_is_empty(menu_get_windows_hash());
+
+	int offset = 0;
+	while (e->title) {
+		/* Non-tabs */
+		for (; e->title; e++) {
+			char * title = e->title;
+			if (*title == '\t' || *title == '\v') break;
+			int w = string_width(title) + 11;
+			uint32_t text_color = RAZION_TEXT_PRIMARY;
+			if ((self->active_menu && hashmap_has(menu_get_windows_hash(), (void*)(uintptr_t)self->active_menu_wid)) && e == self->active_entry) {
+				draw_rectangle(subctx, offset + 2, 0, w, height, RAZION_SELECTION);
+			}
+			draw_string(subctx, offset + 7, 2, text_color, title);
+			offset += w;
+		}
+
+		/* tabs */
+		for (; e->title; e++) {
+			char * title = e->title;
+			if (*title != '\t' && *title != '\v') break;
+			if (!tabs || (tab_width < 4)) continue;
+			int tab_active = *title == '\v';
+			title++;
+
+			int w = string_width(title);
+			int left_pad = (tab_width - w - 5) / 2;
+			if (left_pad < 0) left_pad = (tab_width - w - 5);
+
+			draw_rounded_rectangle(subctx, offset + 2, 0, tab_width + 1, height + 3, 5, RAZION_BACKGROUND); /* This creates a small overlap in tabs, which is intended. */
+			char * tab_color = strchr(e->action,';');
+			if (tab_color) {
+				/* Parse the color */
+				char r[3] = {tab_color[1],tab_color[2],'\0'};
+				char g[3] = {tab_color[3],tab_color[4],'\0'};
+				char b[3] = {tab_color[5],tab_color[6],'\0'};
+				uint32_t color = rgba(strtoul(r,NULL,16),strtoul(g,NULL,16),strtoul(b,NULL,16),255);
+				draw_rounded_rectangle(subctx, offset + 3, 1, tab_width - 1, height + 3, 4, color);
+				draw_rounded_rectangle(subctx, offset + 5, 3, tab_width - 5, height + 3, 2, tab_active ? premultiply(rgba(72,72,72,50)) : premultiply(rgba(59,59,59,220)));
+			} else {
+				draw_rounded_rectangle(subctx, offset + 3, 1, tab_width - 1, height + 3, 4, tab_active ? RAZION_SURFACE_HOVER : RAZION_SURFACE_SECONDARY);
+			}
+			if (tab_active && window_is_focused) draw_rectangle(subctx, offset+3, subctx->height - 2, tab_width - 1, 2, RAZION_ACCENT);
+			gfx_context_t * clip = init_graphics_subregion(subctx, offset + 5, 0, tab_width - 5, subctx->height);
+			draw_string(clip, left_pad, 2, (tab_active && window_is_focused) ? RAZION_TEXT_PRIMARY : RAZION_TEXT_SECONDARY, title);
+			free(clip);
+
+			offset += tab_width;
+		}
+
+		offset += extra;
+	}
+
+	free(subctx);
+}
+
+void menu_bar_show_menu(yutani_t * yctx, yutani_window_t * window, struct menu_bar * self, int offset, struct menu_bar_entries * _entries) {
+	if (*_entries->title == '\t' || *_entries->title == '\v') return;
+
+	struct MenuList * new_menu = menu_set_get_menu(self->set, _entries->action);
+
+	ssize_t tabs, tab_width, extra;
+	menu_bar_preflight(self, &tabs, &tab_width, &extra);
+
+	int i = 0;
+	if (offset == -1) {
+		/* Must calculate */
+		offset = self->x;
+		struct menu_bar_entries * e = self->entries;
+		while (e->title) {
+			for (; e->title; e++) {
+				if (e == _entries) break;
+				if (*e->title == '\t' || *e->title == '\v') break;
+				offset += string_width(e->title) + 11;
+				i++;
+			}
+			if (e == _entries) break;
+			for (; e->title; e++) {
+				if (e == _entries) break;
+				if (*e->title != '\t' && *e->title != '\v') break;
+				if (!tabs || (tab_width < 4)) continue;
+				offset += tab_width;
+				i++;
+			}
+			if (e == _entries) break;
+			offset += extra;
+			i++;
+		}
+	} else {
+		struct menu_bar_entries * e = self->entries;
+		while (e->title) {
+			if (e == _entries) break;
+			e++;
+			i++;
+		}
+	}
+
+	new_menu->main_window = window;
+	menu_prepare(new_menu, yctx);
+	int right_side = new_menu->window->width + window->x + offset;
+	int offset_x = (right_side > (int)yctx->display_width) ?
+		(right_side - (int)yctx->display_width) : 0;
+	yutani_window_move_relative(yctx, new_menu->window, window, offset - offset_x, self->y + MENU_BAR_HEIGHT);
+	yutani_flip(yctx, new_menu->window);
+
+	self->active_menu = new_menu;
+	self->active_menu->_bar = self;
+	self->active_menu_wid = new_menu->window->wid;
+	self->active_entry = _entries;
+	self->active_entry_idx = i;
+	if (self->redraw_callback) {
+		self->redraw_callback(self);
+	}
+}
+
+int menu_bar_mouse_event(yutani_t * yctx, yutani_window_t * window, struct menu_bar * self, struct yutani_msg_window_mouse_event * me, int x, int y) {
+	if (x < self->x || x >= self->x + self->width || y < self->y || y >= self->y + 24 /* base height */) {
+		return 0;
+	}
+
+	int offset = self->x;
+	ssize_t tabs, tab_width, extra;
+	menu_bar_preflight(self, &tabs, &tab_width, &extra);
+
+	struct menu_bar_entries * e = self->entries;
+	while (e->title) {
+		for (; e->title; e++) {
+			char * title = e->title;
+			if (*title == '\t' || *title == '\v') break;
+			int w = string_width(title) + 11;
+			if (x >= offset && x < offset + w) {
+				if (me->command == YUTANI_MOUSE_EVENT_CLICK || _close_enough(me)) {
+					menu_bar_show_menu(yctx, window, self,offset,e);
+				} else if (self->active_menu && hashmap_has(menu_get_windows_hash(), (void*)(uintptr_t)self->active_menu_wid) && e != self->active_entry) {
+					menu_definitely_close(self->active_menu);
+					menu_bar_show_menu(yctx, window, self,offset,e);
+				}
+				return 0;
+			}
+			offset += w;
+		}
+		for (; e->title; e++) {
+			if (*e->title != '\t' && *e->title != '\v') break;
+			if (!tabs || (tab_width < 4)) continue;
+			if (x >= offset && x < offset + tab_width) {
+				int action = 0;
+				if (me->command == YUTANI_MOUSE_EVENT_CLICK || _close_enough(me)) {
+					action = 1; /* TODO enum */
+				} else if (me->buttons & YUTANI_MOUSE_BUTTON_RIGHT) {
+					action = 2;
+				}
+				if (action) ((struct menu_bar_with_tabs*)self)->tab_callback((struct menu_bar_with_tabs*)self, e, action, x, y);
+				return 0;
+			}
+			offset += tab_width;
+		}
+		offset += extra;
+	}
+
+	if (x >= offset && me->command == YUTANI_MOUSE_EVENT_DOWN && me->buttons & YUTANI_MOUSE_BUTTON_LEFT) {
+		yutani_window_drag_start(yctx, window);
+	}
+
+	return 0;
+}

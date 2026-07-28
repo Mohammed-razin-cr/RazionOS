@@ -1,0 +1,6 @@
+{
+    "--comment": "RazionOS Terminal defaults.",
+    "beep-on-bell": false,
+    "bitmap": false,
+    "emulatebold": true
+}

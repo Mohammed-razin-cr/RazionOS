@@ -1,0 +1,92 @@
+.TH FETCH 1 "April, 2026"
+
+.SH NAME
+\fBfetch\fP \- download files
+
+.SH SYNOPSIS
+\fBfetch\fP [\fB\-hOvmpf\fP] [\fB\-c\fP \fIcookies\fP] [\fB\-o\fP \fIfile\fP] [\fB\-u\fP \fIfile\fP]
+[\fB\-s\fP \fIspeed\fP] [\fB\-L\fP \fIlabel\fP] \fIURL\fP
+
+.SH DESCRIPTION
+The \fBfetch\fP utility downloads files over HTTP.
+.PP
+By default, \fBfetch\fP will still download the response bodies of error
+pages. To supress this behavior, use the \fB\-f\fP option.
+
+.SS Options
+
+.TP
+.B \-h
+Show headers set by the server.
+
+.TP
+.B \-O
+Save the file to a filename based on the last element of the path in the URL.
+
+.TP
+.B \-v
+Show progress of the download. If the server provided a content size, a progress
+bar will also be displayed.
+
+.TP
+.B \-m
+Print machine readable output. In addition to any progress display from \-v,
+this option will output a line containing the current download size, a space,
+and then the total download size (which may be unset), and finally print the
+string "done" when the download has completed, to standard output. This can
+be read to display a graphical progress bar.
+
+.TP
+.B \-p
+Prompt for a password to be placed in the body of an upload as a form data
+field called "password". You probably don't want this.
+This does \fInot\fP set an authentication header.
+
+.TP
+.B \-f
+Fail early if the status code in the respons is not 200.
+
+.TP
+.B \-c \fIcookies\fP
+Set the \fIcookies\fP to be sent with the request.
+
+.TP
+.B \-o \fIfile\fP
+Write the output to a given \fIfile\fP instead of standard output.
+
+.TP
+.B \-u \fIfile\fP
+Upload the contents of \fIfile\fP as a form value named "file".
+You probably don't want this.
+
+.TP
+.B \-s \fIspeed\fP
+Sleeps for \fIspeed\fP ms between sending blocks of 1024 bytes when uploading
+a file with the \fB\-u\fP option.
+
+.TP
+.B \-L \fIlabel\fP
+When combined with \fB\-v\fP, prefix the download progress with the given label.
+
+.SH EXIT STATUS
+.TP
+22
+The \fB\-f\fP option was specified and the response from the server was not 200.
+This exit status value is taken from Curl for compatibility.
+
+.TP
+1
+Some other error occurred.
+
+.TP
+0
+Download completed successfully.
+
+.SH NOTES
+This utility does not support TLS connections. An alternative version of this
+utility, called \fBfetch\-tls\fP, may be available from the package repository,
+which does support TLS. Options supported by that utility may differ from this
+one.
+
+.SH SEE ALSO
+.BR fetch\-tls (1)

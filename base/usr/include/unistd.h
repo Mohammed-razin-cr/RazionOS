@@ -1,0 +1,154 @@
+#pragma once
+
+#include <_cheader.h>
+#include <stddef.h>
+#include <sys/types.h>
+
+_Begin_C_Header
+
+#define _POSIX_VERSION 200809L
+
+extern char **environ;
+
+extern pid_t getpid(void);
+extern pid_t getppid(void);
+
+extern int close(int fd);
+
+extern pid_t fork(void);
+extern pid_t _Fork(void);
+
+extern int execl(const char *path, const char *arg, ...);
+extern int execlp(const char *file, const char *arg, ...);
+extern int execle(const char *path, const char *arg, ...);
+extern int execv(const char *path, char *const argv[]);
+extern int execvp(const char *file, char *const argv[]);
+extern int execve(const char *name, char * const argv[], char * const envp[]);
+extern void _exit(int status);
+
+#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE) || defined(_TOARU_SOURCE)
+extern int execvpe(const char *file, char *const argv[], char *const envp[]);
+#endif
+
+extern int setuid(uid_t uid);
+extern int setgid(gid_t gid);
+
+extern int seteuid(uid_t euid);
+extern int setreuid(uid_t ruid, uid_t euid);
+extern int setresuid(uid_t ruid, uid_t euid, uid_t suid);
+
+extern int setegid(gid_t egid);
+extern int setregid(gid_t rgid, gid_t egid);
+extern int setresgid(gid_t rgid, gid_t egid, gid_t sgid);
+
+extern uid_t getuid(void);
+extern uid_t geteuid(void);
+extern gid_t getgid(void);
+extern gid_t getegid(void);
+extern char * getcwd(char *buf, size_t size);
+extern int pipe(int pipefd[2]);
+extern int pipe2(int pipefd[2], int flag);
+extern int dup(int oldfd);
+extern int dup2(int oldfd, int newfd);
+extern int dup3(int oldfd, int newfd, int flag);
+
+extern pid_t tcgetpgrp(int fd);
+extern int tcsetpgrp(int fd, pid_t pgrp);
+
+extern ssize_t write(int fd, const void * buf, size_t count);
+extern ssize_t read(int fd, void * buf, size_t count);
+
+extern int symlink(const char *target, const char *linkpath);
+extern ssize_t readlink(const char *pathname, char *buf, size_t bufsiz);
+
+extern int chdir(const char *path);
+//extern int fchdir(int fd);
+extern int isatty(int fd);
+
+extern unsigned int sleep(unsigned int seconds);
+extern int usleep(useconds_t usec);
+extern off_t lseek(int fd, off_t offset, int whence);
+
+extern int access(const char * pathname, int mode);
+
+#if defined(_GNU_SOURCE)
+extern int eaccess(const char * pathname, int mode);
+#endif
+
+#if defined(_GNU_SOURCE) || defined(_TOARU_SOURCE)
+extern int gettid(void);
+#endif
+
+extern int getopt(int argc, char * const argv[], const char * optstring);
+
+extern char * optarg;
+extern int optind, opterr, optopt;
+
+extern int link(const char *target, const char *linkpath);
+extern int unlink(const char * pathname);
+
+/* Unimplemented stubs */
+extern int rmdir(const char *pathname); /* TODO  rm probably just works */
+extern int chown(const char * pathname, uid_t owner, gid_t group);
+extern int fchown(int fd, uid_t owner, gid_t group);
+extern int lchown(const char * pathname, uid_t owner, gid_t group);
+
+extern char * getlogin(void);
+extern int getlogin_r(char *, size_t);
+extern char * ttyname(int fd);
+extern int ttyname_r(int fd, char * buf, size_t buflen);
+
+#define STDIN_FILENO 0
+#define STDOUT_FILENO 1
+#define STDERR_FILENO 2
+
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+
+#include <bits/access.h>
+
+extern int gethostname(char * name, size_t len);
+extern int sethostname(const char * name, size_t len);
+
+extern pid_t setsid(void);
+extern int setpgid(pid_t, pid_t);
+extern pid_t getpgid(pid_t);
+extern pid_t getpgrp(void);
+extern pid_t getsid(pid_t);
+
+extern unsigned int alarm(unsigned int seconds);
+
+#ifndef intptr_t
+# if defined(__PTRDIFF_TYPE__)
+typedef signed __PTRDIFF_TYPE__ intptr_t;
+# else
+typedef signed long intptr_t;
+# endif
+#endif
+extern void *sbrk(intptr_t increment);
+
+extern void sync(void);
+extern int truncate(const char *, off_t);
+extern int ftruncate(int, off_t);
+
+#define _PC_PATH_MAX 1
+extern long pathconf(const char *path, int name);
+
+extern int getgroups(int size, gid_t list[]);
+
+#ifdef _TOARU_SOURCE
+extern int setgroups(int size, const gid_t list[]);
+#endif
+
+ssize_t pread(int fd, void *buf, size_t count, off_t offset);
+ssize_t pwrite(int fd, const void *buf, size_t count, off_t offset);
+
+#if !defined(_POSIX_C_SOURCE) || _POSIX_C_SOURCE < 200809L
+extern char *getwd(char *buf);
+#endif
+
+extern long sysconf(int name);
+#include <bits/sysconf.h>
+
+_End_C_Header

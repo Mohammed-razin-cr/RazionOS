@@ -1,0 +1,157 @@
+/**
+ * @brief Authentication routines.
+ *
+ * @copyright
+ * This file is part of ToaruOS and is released under the terms
+ * of the NCSA / University of Illinois License - see LICENSE.md
+ * Copyright (C) 2013-2018 K. Lange
+ */
+#define _TOARU_SOURCE
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <pwd.h>
+#include <libgen.h>
+
+#ifndef fgetpwent
+extern struct passwd *fgetpwent(FILE *stream);
+#endif
+
+extern int setgroups(int size, const gid_t list[]);
+
+#define MASTER_PASSWD "/etc/master.passwd"
+
+int toaru_auth_check_pass(char * user, char * pass) {
+	FILE * master = fopen(MASTER_PASSWD, "r");
+	struct passwd * p;
+
+	while ((p = fgetpwent(master))) {
+		if (!strcmp(p->pw_name, user) && !strcmp(p->pw_passwd, pass)) {
+			fclose(master);
+			return p->pw_uid;
+		}
+	}
+
+	fclose(master);
+	return -1;
+}
+
+gid_t toaru_auth_get_default_group(uid_t uid) {
+	FILE * master = fopen(MASTER_PASSWD, "r");
+	struct passwd * p;
+	while ((p = fgetpwent(master))) {
+		if (p->pw_uid == uid) {
+			fclose(master);
+			return p->pw_gid;
+		}
+	}
+	fclose(master);
+	return -1;
+}
+
+void toaru_auth_set_vars(void) {
+	int uid = getuid();
+
+	struct passwd * p = getpwuid(uid);
+
+	if (!p) {
+		char tmp[10];
+		sprintf(tmp, "%d", uid);
+		setenv("USER", strdup(tmp), 1);
+		setenv("HOME", "/", 1);
+		setenv("SHELL", "/bin/sh", 1);
+	} else {
+		setenv("USER", strdup(p->pw_name), 1);
+		setenv("HOME", strdup(p->pw_dir), 1);
+		setenv("SHELL", strdup(p->pw_shell), 1);
+		setenv("WM_THEME", strdup(p->pw_comment), 1);
+	}
+	endpwent();
+
+	setenv("PATH", "/usr/bin:/bin", 0);
+	chdir(getenv("HOME"));
+}
+
+void toaru_auth_exec_shell(int login_shell) {
+	char * shell = getenv("SHELL");
+	if (!shell) shell = "/bin/sh";
+	char args0[1024];
+	snprintf(args0, 1024,  "%s%s", login_shell ? "-" : "", basename(shell));
+	char * args[] = {args0, NULL};
+	execv(shell, args);
+}
+
+void toaru_auth_get_groups(uid_t uid, int *groupCount, gid_t *groups) {
+
+	/* Get the username for this uid */
+	struct passwd * pwd = getpwuid(uid);
+	*groupCount = 0;
+	memset(groups, 0, sizeof(gid_t) * 32);
+
+	/* No username? No group memberships! */
+	if (!pwd) return;
+
+	/* Open the group file */
+	FILE * groupList = fopen("/etc/group","r");
+
+	/* No groups? No membership. */
+	if (!groupList) return;
+
+	/* Scan through lines of groups. */
+	char * pw_blob = NULL;
+	size_t avail = 0;
+
+	while (!feof(groupList)) {
+		ssize_t len;
+		if ((len = getline(&pw_blob, &avail, groupList)) <= 0) break;
+		if (pw_blob[len-1] == '\n') pw_blob[len-1] = '\0';
+
+		/* Tokenize */
+		char * memberlist = NULL;
+		char *p, *last;
+		gid_t groupNumber = -1;
+		int i = 0;
+		for ((p = strtok_r(pw_blob, ":", &last)); p;
+				(p = strtok_r(NULL, ":", &last)), i++) {
+			if (i == 2) {
+				groupNumber = atoi(p);
+			} else if (i == 3) {
+				memberlist = p;
+				break;
+			}
+		}
+
+		if (groupNumber == -1) continue;
+		if (!memberlist) continue;
+
+		for ((p = strtok_r(memberlist, ",", &last)); p;
+				(p = strtok_r(NULL, ",", &last))) {
+			if (!strcmp(p, pwd->pw_name)) {
+				if (*groupCount < 32) {
+					groups[*groupCount] = groupNumber;
+					(*groupCount)++;
+				}
+			}
+		}
+	}
+
+	free(pw_blob);
+	fclose(groupList);
+	return;
+}
+
+void toaru_auth_set_groups(uid_t uid) {
+	int groupCount = 0;
+	gid_t groups[32] = {0};
+	toaru_auth_get_groups(uid, &groupCount, groups);
+
+	setgroups(groupCount, groups);
+}
+
+void toaru_set_credentials(uid_t uid, gid_t gid) {
+	toaru_auth_set_groups(uid);
+	setgid(gid);
+	setuid(uid);
+	toaru_auth_set_vars();
+}

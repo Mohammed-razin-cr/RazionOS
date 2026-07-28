@@ -1,0 +1,3 @@
+icon=home
+run=cd ~ ; exec file-browser
+title=Home
