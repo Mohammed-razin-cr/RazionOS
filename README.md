@@ -123,10 +123,6 @@ RazionOS-specific work currently consists of product identity, desktop
 presentation, theming, integration changes, documentation, and release
 engineering on top of that upstream foundation.
 
-Original authorship is preserved in [AUTHORS](AUTHORS), source headers, Git
-history, and [NOTICE.md](NOTICE.md). Bim and Kuroko remain separately
-maintained projects with their own license files in their submodules.
-
 ## License
 
 The inherited ToaruOS code and RazionOS modifications are distributed under
