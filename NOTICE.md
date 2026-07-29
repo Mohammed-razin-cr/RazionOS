@@ -10,6 +10,11 @@ University of Illinois/NCSA Open Source License in `LICENSE` applies to the
 inherited code and RazionOS modifications unless a component or file states
 different terms.
 
+The MIT License in `LICENSE-RAZIONOS-MIT` is available for standalone,
+RazionOS-authored files that explicitly identify that license. It does not
+replace the NCSA license for inherited ToaruOS code or for files without that
+explicit designation.
+
 The repository's `AUTHORS` file, source headers, and Git history preserve
 upstream authorship information. The RazionOS name, presentation, and
 documentation do not imply that RazionOS created the inherited operating
