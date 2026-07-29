@@ -37,6 +37,7 @@ class Classifier:
         '<toaru/text.h>':        (None, '-ltoaru_text',        ['<toaru/graphics.h>', '<toaru/hashmap.h>']),
         '<toaru/markup_text.h>': (None, '-ltoaru_markup_text', ['<toaru/graphics.h>', '<toaru/markup.h>', '<toaru/text.h>']),
         '<toaru/procfs.h>':      (None, '-ltoaru_procfs',      []),
+        '<toaru/razion_ai.h>':   (None, '-ltoaru_razion_ai',   ['<toaru/pex.h>']),
         # Kuroko
         '<kuroko/kuroko.h>':     ('../../../kuroko/src', '-lkuroko', []),
     }
@@ -205,5 +206,4 @@ if __name__ == "__main__":
             libraries=" ".join([x for x in _libs]),
             includes=" ".join([x for x in c.includes if x is not None])
             ))
-
 

@@ -15,12 +15,19 @@ First public milestone.
 - Central identity and semantic theme headers for future development
 - Build, architecture, UI, design, rebranding, and VirtualBox documentation
 - Current RazionOS and historical baseline screenshots
+- Razion AI Engine Phase 1 with a native SDK, versioned IPC protocol,
+  local-first provider routing, explicit cloud opt-in, and metadata-only audit
+  logging
+- Provider-independent APIs for AI-assisted search, analysis, diagnostics,
+  code, documents, applications, settings proposals, and optional voice input
 
 ### Verified
 
 - Clean x86_64 build with the pinned Docker toolchain
 - Hybrid live ISO generation with BIOS and x86_64 UEFI boot entries
 - Interactive desktop boot in VirtualBox
+- Razion AI Engine startup, health reporting, provider discovery, and audit
+  metadata in the live system
 
 ### Origins
 
