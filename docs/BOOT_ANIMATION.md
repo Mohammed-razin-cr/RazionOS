@@ -63,8 +63,9 @@ boot-verbose
 
 ## Fallback behavior
 
-If `/dev/fb0` cannot be opened, the font cannot be loaded, animation is
-disabled, or verbose/debug output is requested, `razion-splash` keeps the same
+If `/dev/fb0` cannot be opened, the font cannot be loaded, a legacy 24-bit VBE
+framebuffer or VboxVGA adapter is detected, animation is disabled, or
+verbose/debug output is requested, `razion-splash` keeps the same
 PEX endpoint and writes the real startup messages to `/dev/console`. The
 kernel framebuffer terminal remains available underneath it, so a graphics
 failure cannot leave the display blank.

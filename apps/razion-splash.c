@@ -101,6 +101,18 @@ static int animation_enabled(void) {
 	return !has_option("boot-animation=off") && !has_option("boot-verbose") && !has_option("debug");
 }
 
+static int framebuffer_supported(gfx_context_t * ctx) {
+	if (!ctx || ctx->size == 0) return 0;
+
+	/* VboxVGA's legacy early framebuffer is not reliable for direct rendering. */
+	FILE * pci = fopen("/proc/pci", "r");
+	if (!pci) return 1;
+	char buffer[2048] = {0};
+	size_t length = fread(buffer, 1, sizeof(buffer) - 1, pci);
+	fclose(pci);
+	return !length || !strstr(buffer, "80ee:beef");
+}
+
 static int animation_step(void) {
 	if (has_option("boot-animation-speed=fast")) return 18;
 	if (has_option("boot-animation-speed=slow")) return 7;
@@ -211,7 +223,8 @@ int main(int argc, char * argv[]) {
 	int graphical = animation_enabled();
 	gfx_context_t * ctx = graphical ? init_graphics_fullscreen_double_buffer() : NULL;
 	struct TT_Font * font = ctx ? tt_font_from_file("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf") : NULL;
-	if (!ctx || !font) graphical = 0;
+	/* Legacy framebuffer paths use the proven text-mode fallback. */
+	if (!font || !framebuffer_supported(ctx)) graphical = 0;
 
 	FILE * endpoint = pex_bind("splash");
 	if (!endpoint) return fprintf(stderr, "%s: pex: %s\n", argv[0], strerror(errno)), 1;
