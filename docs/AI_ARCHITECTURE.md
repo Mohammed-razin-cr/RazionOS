@@ -1,9 +1,10 @@
 # Razion AI architecture
 
-## Phase 1 status
+## Current status
 
-Phase 1 establishes Razion AI as an operating-system service. It does not ship
-a chatbot, bundle a model, contact a cloud provider, or grant AI unrestricted
+Phases 1 and 2 establish Razion AI as an operating-system service and add
+Razion Pulse as its safe command interface. RazionOS does not ship a chatbot,
+bundle a model, contact a cloud provider by default, or grant AI unrestricted
 system access.
 
 Implemented components:
@@ -19,6 +20,9 @@ Implemented components:
 - `razion-ai-status` diagnostic utility
 - typed operation identifiers for files, documents, applications, code,
   errors, logs, processes, disks, networking, health, settings, and voice
+- Razion Pulse Phase 2 command interface and native action broker
+- offline intent classification with validated local-provider fallback
+- canonical action proposals with risk, capability, and confirmation policy
 
 ## System position
 
@@ -96,18 +100,20 @@ The engine is a policy broker, not a shell.
 - Prompt contents are never written to the audit log.
 - Audit records contain time, PEX source identifier, application identifier,
   operation, selected provider, status, flags, and requested capabilities.
-- Requests carrying `EXECUTE_ACTION` require a confirmation flag and are
-  still denied in Phase 1.
-- No provider receives a task-execution capability in Phase 1.
+- Requests carrying `EXECUTE_ACTION` require a confirmation flag and remain
+  denied because provider output cannot execute actions directly.
+- No provider receives a task-execution capability.
 - No API key belongs in the repository or `/etc/razion-ai.conf`.
 
-Future action execution must call capability-scoped operating-system brokers;
-it must never pass generated text directly to a shell.
+Pulse Phase 2 executes only fixed, non-privileged native actions. Future
+privileged action execution must call capability-scoped operating-system
+brokers; it must never pass generated text directly to a shell.
 
 ## Roadmap
 
 1. **Complete:** engine, provider abstraction, SDK protocol, policy baseline.
-2. Pulse command interface and native action proposals.
+2. **Complete:** Pulse command interface, canonical native action proposals,
+   offline vocabulary, confirmation, and audit policy.
 3. Indexed file search.
 4. Insight diagnostics.
 5. Memory activity index.

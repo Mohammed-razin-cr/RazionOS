@@ -10,10 +10,11 @@
 
 ## Architecture and design records
 
-- [Razion AI architecture](AI_ARCHITECTURE.md) — Phase 1 engine, IPC,
+- [Razion AI architecture](AI_ARCHITECTURE.md) — engine, IPC, Pulse,
   provider routing, security boundary, and roadmap
 - [Razion AI SDK](AI_SDK.md) — native application API and result handling
-- [Razion Pulse](PULSE.md) — safe operating-system command interface design
+- [Razion Pulse](PULSE.md) — implemented safe operating-system command
+  interface and native action policy
 - [Razion Insight](INSIGHT.md) — explainable system diagnostics design
 - [Razion Memory](MEMORY.md) — privacy-controlled semantic activity index
 - [Architecture survey](RAZIONOS_ARCHITECTURE.md) — Stage 1 upstream baseline

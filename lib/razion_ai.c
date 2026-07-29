@@ -44,6 +44,8 @@ static int operation_capabilities(razion_ai_operation_t operation) {
 		case RAZION_AI_OP_SETTINGS_REQUEST:
 			return RAZION_AI_CAP_TEXT | RAZION_AI_CAP_SETTINGS |
 				RAZION_AI_CAP_TASK_PROPOSE;
+		case RAZION_AI_OP_CLASSIFY_INTENT:
+			return RAZION_AI_CAP_TEXT | RAZION_AI_CAP_TASK_PROPOSE;
 		case RAZION_AI_OP_ASK:
 		case RAZION_AI_OP_EXPLAIN_ERROR:
 		case RAZION_AI_OP_SUMMARIZE:
@@ -262,6 +264,13 @@ int razion_ai_settings_request(
 	const char * request,
 	razion_ai_response_t * response) {
 	return razion_ai_request(context, RAZION_AI_OP_SETTINGS_REQUEST, request, 0, response);
+}
+
+int razion_ai_classify_intent(
+	razion_ai_context_t * context,
+	const char * request,
+	razion_ai_response_t * response) {
+	return razion_ai_request(context, RAZION_AI_OP_CLASSIFY_INTENT, request, 0, response);
 }
 
 int razion_ai_health(

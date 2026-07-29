@@ -20,6 +20,12 @@ First public milestone.
   logging
 - Provider-independent APIs for AI-assisted search, analysis, diagnostics,
   code, documents, applications, settings proposals, and optional voice input
+- Razion Pulse Phase 2 with an offline command vocabulary, local-only
+  provider classification fallback, canonical native actions, risk policy,
+  explicit confirmation, and per-user metadata auditing
+- Safe native Pulse actions for launching selected applications, opening
+  standard directories, reporting memory use, and creating a fixed Python
+  project without overwriting existing files
 
 ### Verified
 
@@ -28,6 +34,9 @@ First public milestone.
 - Interactive desktop boot in VirtualBox
 - Razion AI Engine startup, health reporting, provider discovery, and audit
   metadata in the live system
+- Razion Pulse memory reporting, native directory launch, JSON planning,
+  confirmation enforcement, overwrite protection, privileged denial, and
+  metadata-only auditing in VirtualBox
 
 ### Origins
 

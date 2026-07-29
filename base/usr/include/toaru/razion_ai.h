@@ -33,6 +33,7 @@ typedef enum {
 	RAZION_AI_OP_VOICE_COMMAND,
 	RAZION_AI_OP_DOCUMENT_SEARCH,
 	RAZION_AI_OP_SETTINGS_REQUEST,
+	RAZION_AI_OP_CLASSIFY_INTENT,
 } razion_ai_operation_t;
 
 typedef enum {
@@ -188,6 +189,10 @@ extern int razion_ai_document_search(
 	const char * query,
 	razion_ai_response_t * response);
 extern int razion_ai_settings_request(
+	razion_ai_context_t * context,
+	const char * request,
+	razion_ai_response_t * response);
+extern int razion_ai_classify_intent(
 	razion_ai_context_t * context,
 	const char * request,
 	razion_ai_response_t * response);

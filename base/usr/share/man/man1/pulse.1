@@ -1,0 +1,54 @@
+.TH PULSE 1 "RazionOS 0.1 Alpha"
+.SH NAME
+pulse \- safe natural-language operating-system command interface
+.SH SYNOPSIS
+.B pulse
+[\fB\-\-plan\fP]
+[\fB\-\-confirm\fP]
+[\fB\-\-json\fP]
+[\fIREQUEST\fP]
+.SH DESCRIPTION
+.B Razion Pulse
+maps a natural-language request to a bounded operating-system action.
+It is a command interface, not a chatbot.
+Actions are implemented through fixed native APIs; request text and AI
+provider output are never executed by a shell.
+.PP
+When no request is supplied, Pulse reads one request interactively.
+Read-only actions may run immediately.
+Actions that modify user data require explicit confirmation.
+Privileged and unavailable actions remain proposals and are not executed.
+.SH OPTIONS
+.TP
+.B \-\-plan
+Display the validated proposal without executing it.
+.TP
+.B \-\-confirm
+Explicitly approve an available change action after reviewing its target.
+.TP
+.B \-\-json
+Display a machine-readable proposal and imply
+.BR \-\-plan .
+.SH EXAMPLES
+.TP
+.B pulse "Open Downloads"
+Open the user's Downloads directory with the native file browser.
+.TP
+.B pulse "Check memory usage"
+Read and summarize the kernel memory information.
+.TP
+.B pulse \-\-plan "Create a Python project"
+Preview the fixed project target and required confirmation.
+.TP
+.B pulse \-\-confirm "Create a Python project"
+Create the project only if the target does not already exist.
+.SH SECURITY
+Pulse validates all actions against a fixed action vocabulary.
+It never evaluates request text as a command.
+Provider-assisted classification is local-only by default and its output must
+match a known action identifier.
+Privileged actions are denied until a dedicated native broker exists.
+Audit records contain metadata only and are stored in
+.IR ~/.razion/pulse-audit.log .
+.SH SEE ALSO
+.BR razion-ai-status (1)

@@ -10,6 +10,7 @@ log-out,exit,Log Out
 :accessories
 exec calculator,calculator,Calculator
 exec file-browser,folder,File Browser
+exec terminal pulse,utilities-terminal,Razion Pulse
 exec terminal,utilities-terminal,Terminal
 :demos
 exec drawlines,drawlines,Draw Lines

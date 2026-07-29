@@ -84,7 +84,7 @@ records the derived architecture and does not rewrite upstream history.
 | Hostname | `razion` | Implemented |
 | Shell identity | `rzsh` | Implemented as compatible alias |
 | Package manager | `rzpkg` | Reserved; not implemented |
-| Command interface | Razion Pulse | Reserved; not implemented |
+| Command interface | Razion Pulse | Implemented in AI Phase 2 |
 | Application sandbox | Razion Capsules | Reserved; not implemented |
 | System monitor | Razion Insight | Reserved; not implemented |
 

@@ -219,6 +219,7 @@ static const char * operation_name(uint16_t operation) {
 		case RAZION_AI_OP_VOICE_COMMAND: return "voice-command";
 		case RAZION_AI_OP_DOCUMENT_SEARCH: return "document-search";
 		case RAZION_AI_OP_SETTINGS_REQUEST: return "settings-request";
+		case RAZION_AI_OP_CLASSIFY_INTENT: return "classify-intent";
 		default: return "unknown";
 	}
 }
@@ -380,7 +381,7 @@ static void handle_request(
 				"engine", "Action execution requires explicit user confirmation.");
 		} else {
 			set_response(response, request, RAZION_AI_STATUS_PERMISSION_DENIED,
-				"engine", "Phase 1 does not grant action-execution capabilities.");
+				"engine", "Direct provider action execution is disabled; use an approved native broker.");
 		}
 		return;
 	}
@@ -409,6 +410,7 @@ static void handle_request(
 		case RAZION_AI_OP_VOICE_COMMAND:
 		case RAZION_AI_OP_DOCUMENT_SEARCH:
 		case RAZION_AI_OP_SETTINGS_REQUEST:
+		case RAZION_AI_OP_CLASSIFY_INTENT:
 			break;
 		default:
 			set_response(response, request, RAZION_AI_STATUS_UNSUPPORTED,
