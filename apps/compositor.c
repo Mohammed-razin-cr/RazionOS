@@ -71,9 +71,32 @@ static gfx_context_t * blur_ctx = NULL;
 static gfx_context_t * clip_ctx = NULL;
 #endif
 
-/* A short, opt-in handoff from the early Razion splash to the desktop. */
+/* Event-driven RazionOS loader and desktop handoff. */
 static int razion_boot_fade = 0;
 static uint64_t razion_boot_fade_started = 0;
+static uint64_t razion_boot_loader_started = 0;
+static int razion_boot_loader_ready = 0;
+static struct TT_Font * razion_boot_font = NULL;
+
+#define RAZION_BOOT_BACKGROUND rgb(9,10,12)
+#define RAZION_BOOT_BLUE rgb(78,163,255)
+#define RAZION_BOOT_CYAN rgb(110,219,255)
+#define RAZION_BOOT_WHITE rgb(245,248,252)
+#define RAZION_BOOT_MUTED rgb(163,177,192)
+
+struct razion_logo_segment {
+	int x1, y1, x2, y2;
+};
+
+static struct razion_logo_segment razion_logo_segments[] = {
+	{-28,-42, -28, 42},
+	{-28,-42,  16,-42},
+	{ 16,-42,  31,-27},
+	{ 31,-27,  31, -8},
+	{ 31, -8,  16,  4},
+	{ 16,  4, -28,  4},
+	{ -6,  4,  34, 42},
+};
 
 /**
  * Print usage information.
@@ -1103,6 +1126,96 @@ static void resize_display(yutani_globals_t * yg) {
 	TRACE("Done.");
 }
 
+static uint64_t razion_boot_now_ms(void) {
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	return (uint64_t)now.tv_sec * 1000 + now.tv_usec / 1000;
+}
+
+static int razion_boot_clamp(int value, int low, int high) {
+	if (value < low) return low;
+	if (value > high) return high;
+	return value;
+}
+
+static uint32_t razion_boot_color(uint32_t color, int opacity) {
+	opacity = razion_boot_clamp(opacity, 0, 255);
+	return premultiply(rgba(_RED(color), _GRE(color), _BLU(color), opacity));
+}
+
+static void razion_boot_draw_segment(gfx_context_t * ctx, int center_x, int center_y,
+	int scale, struct razion_logo_segment * segment, int amount, uint32_t color, float width) {
+	if (amount <= 0) return;
+	if (amount > 100) amount = 100;
+
+	int x1 = center_x + segment->x1 * scale / 100;
+	int y1 = center_y + segment->y1 * scale / 100;
+	int x2 = center_x + segment->x2 * scale / 100;
+	int y2 = center_y + segment->y2 * scale / 100;
+	int end_x = x1 + (x2 - x1) * amount / 100;
+	int end_y = y1 + (y2 - y1) * amount / 100;
+	draw_line_aa(ctx, x1, end_x, y1, end_y, color, width);
+}
+
+static void razion_boot_draw_loader(gfx_context_t * ctx, uint64_t now, int opacity, int ready) {
+	uint64_t age = now - razion_boot_loader_started;
+	int reveal = razion_boot_clamp(age * 100 / 560, 0, 100);
+	int scale = 100 - (255 - opacity) * 10 / 255;
+	int center_y = ctx->height / 2 - 48;
+
+	draw_rectangle(ctx, 0, 0, ctx->width, ctx->height,
+		razion_boot_color(RAZION_BOOT_BACKGROUND, opacity));
+
+	int segment_count = sizeof(razion_logo_segments) / sizeof(razion_logo_segments[0]);
+	for (int i = 0; i < segment_count; ++i) {
+		int local = razion_boot_clamp(reveal - i * 100 / segment_count, 0, 100 / segment_count);
+		local *= segment_count;
+		razion_boot_draw_segment(ctx, ctx->width / 2, center_y, scale,
+			&razion_logo_segments[i], local,
+			razion_boot_color(RAZION_BOOT_BLUE, opacity / 5), 5.0f * scale / 100.0f);
+		razion_boot_draw_segment(ctx, ctx->width / 2, center_y, scale,
+			&razion_logo_segments[i], local,
+			razion_boot_color(RAZION_BOOT_CYAN, opacity), 1.6f * scale / 100.0f);
+	}
+
+	if (razion_boot_font) {
+		tt_set_size_px(razion_boot_font, 22 * scale / 100);
+		int title_width = tt_string_width(razion_boot_font, "RazionOS");
+		tt_draw_string(ctx, razion_boot_font, (ctx->width - title_width) / 2,
+			center_y + 78 * scale / 100, "RazionOS",
+			razion_boot_color(RAZION_BOOT_WHITE, opacity));
+	}
+
+	int line_width = ctx->width < 640 ? 210 : 280;
+	int line_x = (ctx->width - line_width) / 2;
+	int line_y = center_y + 116 * scale / 100;
+	draw_rounded_rectangle(ctx, line_x, line_y, line_width, 2, 1,
+		razion_boot_color(RAZION_BOOT_MUTED, opacity / 3));
+
+	if (ready) {
+		draw_rounded_rectangle(ctx, line_x, line_y, line_width, 2, 1,
+			razion_boot_color(RAZION_BOOT_BLUE, opacity));
+	} else {
+		int pulse_width = 56;
+		int pulse = (age / 3) % (line_width + pulse_width) - pulse_width;
+		int pulse_start = max(pulse, 0);
+		int pulse_end = min(pulse + pulse_width, line_width);
+		if (pulse_end > pulse_start) {
+			draw_rounded_rectangle(ctx, line_x + pulse_start, line_y,
+				pulse_end - pulse_start, 2, 1,
+				razion_boot_color(RAZION_BOOT_BLUE, opacity));
+		}
+	}
+
+	if (razion_boot_font) {
+		const char * status = ready ? "Ready" : "Launching Razion Desktop";
+		tt_set_size_px(razion_boot_font, 13);
+		int status_width = tt_string_width(razion_boot_font, status);
+		tt_draw_string(ctx, razion_boot_font, (ctx->width - status_width) / 2,
+			line_y + 30, status, razion_boot_color(RAZION_BOOT_MUTED, opacity));
+	}
+}
+
 /**
  * Redraw all windows, as well as the mouse cursor.
  *
@@ -1111,16 +1224,45 @@ static void resize_display(yutani_globals_t * yg) {
 static void redraw_windows(yutani_globals_t * yg) {
 	int has_updates = 0;
 	int boot_fade_alpha = 0;
-	if (razion_boot_fade && razion_boot_fade_started && !yutani_options.nested) {
-		struct timeval now;
-		gettimeofday(&now, NULL);
-		uint64_t elapsed = ((uint64_t)now.tv_sec * 1000 + now.tv_usec / 1000) - razion_boot_fade_started;
-		if (elapsed < 420) {
-			boot_fade_alpha = (420 - elapsed) * 255 / 420;
-			mark_screen(yg, 0, 0, yg->width, yg->height);
+	int show_boot_loader = 0;
+	uint64_t boot_loader_now = 0;
+
+	if (razion_boot_fade && !yutani_options.nested) {
+		boot_loader_now = razion_boot_now_ms();
+		if (!razion_boot_loader_started) {
+			razion_boot_loader_started = boot_loader_now;
+		}
+
+		uint64_t loader_age = boot_loader_now - razion_boot_loader_started;
+		int desktop_ready = yg->bottom_z && yg->top_z;
+
+		/*
+		 * The wallpaper and panel are real compositor surfaces. Waiting for
+		 * both makes the loader event-driven instead of timer-driven. The
+		 * timeout is only a safety valve for unusual or custom sessions.
+		 */
+		if (!razion_boot_fade_started && (desktop_ready || loader_age >= 8000)) {
+			razion_boot_loader_ready = desktop_ready;
+			razion_boot_fade_started = boot_loader_now;
+		}
+
+		if (!razion_boot_fade_started) {
+			boot_fade_alpha = 255;
+			show_boot_loader = 1;
 		} else {
-			razion_boot_fade = 0;
-			/* Present one unmasked desktop frame after the transition. */
+			uint64_t elapsed = boot_loader_now - razion_boot_fade_started;
+			if (elapsed < 420) {
+				boot_fade_alpha = (420 - elapsed) * 255 / 420;
+				show_boot_loader = 1;
+			} else {
+				razion_boot_fade = 0;
+				/* Present one unmasked desktop frame after the transition. */
+				mark_screen(yg, 0, 0, yg->width, yg->height);
+			}
+		}
+
+		if (show_boot_loader) {
+			/* Keep the procedural vector animation moving at compositor rate. */
 			mark_screen(yg, 0, 0, yg->width, yg->height);
 		}
 	}
@@ -1215,15 +1357,6 @@ static void redraw_windows(yutani_globals_t * yg) {
 		free(win);
 	}
 
-	/* Wait for the first desktop surface before fading it in. */
-	if (razion_boot_fade && !razion_boot_fade_started && !yutani_options.nested && yg->windows->length) {
-		struct timeval now;
-		gettimeofday(&now, NULL);
-		razion_boot_fade_started = (uint64_t)now.tv_sec * 1000 + now.tv_usec / 1000;
-		boot_fade_alpha = 255;
-		mark_screen(yg, 0, 0, yg->width, yg->height);
-	}
-
 	/* Render */
 	if (has_updates) {
 
@@ -1268,9 +1401,9 @@ static void redraw_windows(yutani_globals_t * yg) {
 		}
 #endif
 
-		if (boot_fade_alpha) {
-			draw_rectangle(yg->backend_ctx, 0, 0, yg->width, yg->height,
-				premultiply(rgba(9,10,12,boot_fade_alpha)));
+		if (show_boot_loader) {
+			razion_boot_draw_loader(yg->backend_ctx, boot_loader_now,
+				boot_fade_alpha, razion_boot_loader_ready);
 		}
 
 		if (yutani_options.nested) {
@@ -1296,7 +1429,7 @@ static void redraw_windows(yutani_globals_t * yg) {
 			 * can also go in the stack order of the windows.
 			 */
 			yutani_server_window_t * tmp_window = top_at(yg, yg->mouse_x / MOUSE_SCALE, yg->mouse_y / MOUSE_SCALE);
-			if (!tmp_window || tmp_window->show_mouse) {
+			if (!show_boot_loader && (!tmp_window || tmp_window->show_mouse)) {
 				draw_cursor(yg, tmp_mouse_x, tmp_mouse_y, tmp_window ? tmp_window->show_mouse : 1);
 			}
 
@@ -2474,6 +2607,9 @@ int main(int argc, char * argv[]) {
 	yg->server = server;
 
 	load_fonts(yg);
+	if (razion_boot_fade && !yutani_options.nested) {
+		razion_boot_font = tt_font_from_file("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
+	}
 
 	TRACE("Loading sprites...");
 #define MOUSE_DIR "/usr/share/cursor/"
