@@ -32,7 +32,7 @@ static struct TT_Font * tt_font = NULL;
 static int32_t width = 640;
 static int32_t height = 300;
 static char * title_str = "Wallpaper Picker";
-#define DEFAULT_PATH "/usr/share/wallpaper.jpg"
+#define DEFAULT_PATH "/usr/share/wallpapers/razion-dark.jpg"
 #define WALLPAPERS_PATH "/usr/share/wallpapers"
 
 static char * wallpaper_path;

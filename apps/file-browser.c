@@ -37,7 +37,7 @@
 
 #define APPLICATION_TITLE "File Browser"
 #define SCROLL_AMOUNT 120
-#define WALLPAPER_PATH "/usr/share/wallpaper.jpg"
+#define WALLPAPER_PATH "/usr/share/wallpapers/razion-dark.jpg"
 
 struct File {
 	char name[256];      /* Displayed name (icon label) */

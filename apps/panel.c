@@ -646,7 +646,7 @@ static void update_window_list(void) {
 	redraw();
 }
 
-#define WALLPAPER_PATH "/usr/share/wallpaper.jpg"
+#define WALLPAPER_PATH "/usr/share/wallpapers/razion-dark.jpg"
 
 /* TODO: Share this with file-browser */
 static void blorp_wallpaper(uint32_t *outputs) {
