@@ -31,7 +31,7 @@ int main(int argc, char * argv[]) {
 			"© 2011-2026 K. Lange, et al.",
 			"Upstream components: NCSA/UIUC license.",
 			"-",
-			"%https://github.com/klange/toaruos",
+			"%https://github.com/Mohammed-razin-cr/RazionOS",
 			NULL
 		});
 		fprintf(stderr, "%s: %s\n", argv[0], strerror(errno));

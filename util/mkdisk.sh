@@ -28,7 +28,9 @@ do
     # Create empty FAT image
     rm -f $OUT
     mkdir -p cdrom
-    fallocate -l ${SIZE} $OUT || dd if=/dev/zero bs=1 count=${SIZE} of=$OUT
+    # Docker Desktop bind mounts may not support fallocate. `truncate` creates
+    # the required sized image without the byte-at-a-time fallback used below.
+    fallocate -l ${SIZE} $OUT || truncate -s ${SIZE} $OUT || dd if=/dev/zero bs=1 count=${SIZE} of=$OUT
     mkfs.fat -s 1 -S 2048 $OUT
 
     #echo "Turning $IN into $OUT"
@@ -56,4 +58,3 @@ done
 
 rm -f cdrom/efi/boot/bootia32.efi # Otherwise virtualbox may erroneously try to load from this
 rm -f cdrom/efi/boot/bootx64.efi # Same
-
