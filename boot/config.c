@@ -67,6 +67,18 @@ int kmain() {
 			"Enable debug output in the bootloader and enable the",
 			"serial debug log in the operating system itself.");
 
+	BOOT_OPTION(_boot_animation, 1, "Razion boot animation",
+			"Show the milestone-driven RazionOS graphical boot splash.",
+			"Disable it to use the existing framebuffer text output.");
+
+	BOOT_OPTION(_boot_verbose, 0, "Verbose boot output",
+			"Show real startup messages on the framebuffer console instead",
+			"of the graphical boot splash.");
+
+	BOOT_OPTION(_boot_animation_fast, 0, "Fast boot animation",
+			"Use a faster transition for the Razion boot splash. Normal",
+			"speed is the default; slow is available through command editing.");
+
 	BOOT_OPTION(_smp,         1, "Enable SMP",
 			"SMP support may not be completely stable and can be",
 			"disabled with this option if desired.");
@@ -143,6 +155,18 @@ int kmain() {
 		if (_debug) {
 			txt_debug = 1;
 			strcat(cmdline, "debug ");
+		}
+
+		if (!_boot_animation) {
+			strcat(cmdline, "boot-animation=off ");
+		} else if (_boot_animation_fast) {
+			strcat(cmdline, "boot-animation-speed=fast ");
+		} else {
+			strcat(cmdline, "boot-animation-speed=normal ");
+		}
+
+		if (_boot_verbose) {
+			strcat(cmdline, "boot-verbose ");
 		}
 
 		if (!_vbox) {

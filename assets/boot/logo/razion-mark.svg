@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <!-- Source reference for the original Razion monoline boot mark. -->
+  <rect width="128" height="128" rx="24" fill="#090A0C"/>
+  <g stroke="#6EDBFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M39 27V101M39 27H78L91 40V58L78 70H39M64 70L95 101"/>
+  </g>
+</svg>

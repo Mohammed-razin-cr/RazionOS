@@ -10,10 +10,14 @@ export PATH=/usr/bin:/bin
 export-cmd TZ_OFFSET find-timezone
 export-cmd GETTY_ARGS qemu-fwcfg opt/org.toaruos.gettyargs
 
-echo -n "Launching startup application..." > /dev/pex/splash
-echo -n "!quit" > /dev/pex/splash
+echo -n "@razion:graphics" > /dev/pex/splash
+echo -n "@razion:desktop" > /dev/pex/splash
+echo -n "!ready" > /dev/pex/splash
+
+# Let the splash finish its bounded exit transition before the compositor
+# takes ownership of the framebuffer. Milestone progress itself is event-driven.
+sleep 0.5
 
 if [ "$START" = "--vga" ] then exec /bin/terminal-vga -l
 if [ "$START" = "--headless" ] then exec /bin/getty ${GETTY_ARGS}
-if [ -z "$START" ] then exec /bin/compositor else exec /bin/compositor -- $START
-
+if [ -z "$START" ] then exec /bin/compositor --razion-boot-fade else exec /bin/compositor --razion-boot-fade -- $START

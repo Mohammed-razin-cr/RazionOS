@@ -71,6 +71,10 @@ static gfx_context_t * blur_ctx = NULL;
 static gfx_context_t * clip_ctx = NULL;
 #endif
 
+/* A short, opt-in handoff from the early Razion splash to the desktop. */
+static int razion_boot_fade = 0;
+static uint64_t razion_boot_fade_started = 0;
+
 /**
  * Print usage information.
  */
@@ -80,11 +84,12 @@ static int usage(char * argv[]) {
 	fprintf(stderr,
 			"Yutani - Window Compositor\n"
 			"\n"
-			"usage: %s [-n [-g WxH]] [-h]\n"
+			"usage: %s [-n [-g WxH]] [--razion-boot-fade] [-h]\n"
 			"\n"
 			" -n --nested           " X_S "Run in a window." X_E "\n"
 			" -h --help             " X_S "Show this help message." X_E "\n"
 			" -g --geometry " X_S "WxH     Set the size of the server framebuffer." X_E "\n"
+			"    --razion-boot-fade  " X_S "Fade the RazionOS desktop in at boot." X_E "\n"
 			"\n"
 			"  Yutani is the standard system compositor.\n"
 			"\n",
@@ -99,12 +104,13 @@ static int parse_args(int argc, char * argv[], int * out) {
 	static struct option long_opts[] = {
 		{"nested",     no_argument,       0, 'n'},
 		{"geometry",   required_argument, 0, 'g'},
+		{"razion-boot-fade", no_argument,  0, 'F'},
 		{"help",       no_argument,       0, 'h'},
 		{0,0,0,0}
 	};
 
 	int index, c;
-	while ((c = getopt_long(argc, argv, "hg:n", long_opts, &index)) != -1) {
+	while ((c = getopt_long(argc, argv, "hg:nF", long_opts, &index)) != -1) {
 		if (!c) {
 			if (long_opts[index].flag == 0) {
 				c = long_opts[index].val;
@@ -126,6 +132,9 @@ static int parse_args(int argc, char * argv[], int * out) {
 						yutani_options.nest_height = atoi(c);
 					}
 				}
+				break;
+			case 'F':
+				razion_boot_fade = 1;
 				break;
 			case '?':
 				return usage(argv);
@@ -1101,6 +1110,20 @@ static void resize_display(yutani_globals_t * yg) {
  */
 static void redraw_windows(yutani_globals_t * yg) {
 	int has_updates = 0;
+	int boot_fade_alpha = 0;
+	if (razion_boot_fade && razion_boot_fade_started && !yutani_options.nested) {
+		struct timeval now;
+		gettimeofday(&now, NULL);
+		uint64_t elapsed = ((uint64_t)now.tv_sec * 1000 + now.tv_usec / 1000) - razion_boot_fade_started;
+		if (elapsed < 420) {
+			boot_fade_alpha = (420 - elapsed) * 255 / 420;
+			mark_screen(yg, 0, 0, yg->width, yg->height);
+		} else {
+			razion_boot_fade = 0;
+			/* Present one unmasked desktop frame after the transition. */
+			mark_screen(yg, 0, 0, yg->width, yg->height);
+		}
+	}
 
 	/* We keep our own temporary mouse coordinates as they may change while we're drawing. */
 	int tmp_mouse_x = yg->mouse_x;
@@ -1192,6 +1215,15 @@ static void redraw_windows(yutani_globals_t * yg) {
 		free(win);
 	}
 
+	/* Wait for the first desktop surface before fading it in. */
+	if (razion_boot_fade && !razion_boot_fade_started && !yutani_options.nested && yg->windows->length) {
+		struct timeval now;
+		gettimeofday(&now, NULL);
+		razion_boot_fade_started = (uint64_t)now.tv_sec * 1000 + now.tv_usec / 1000;
+		boot_fade_alpha = 255;
+		mark_screen(yg, 0, 0, yg->width, yg->height);
+	}
+
 	/* Render */
 	if (has_updates) {
 
@@ -1235,6 +1267,11 @@ static void redraw_windows(yutani_globals_t * yg) {
 			}
 		}
 #endif
+
+		if (boot_fade_alpha) {
+			draw_rectangle(yg->backend_ctx, 0, 0, yg->width, yg->height,
+				premultiply(rgba(9,10,12,boot_fade_alpha)));
+		}
 
 		if (yutani_options.nested) {
 			flip(yg->backend_ctx);
