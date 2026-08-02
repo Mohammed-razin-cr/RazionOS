@@ -2,23 +2,39 @@
 import kuroko
 import os
 import _waitpid
-let count = len(kuroko.argv)
 
-if count < 3:
-    print("expected at least two arguments")
+let args = kuroko.argv[1:]
+let permanent = False
+let emptyTrash = False
+if '--permanent' in args:
+    permanent = True
+    args.remove('--permanent')
+if '--empty-trash' in args:
+    emptyTrash = True
+    args.remove('--empty-trash')
+
+if len(args) < 1 or (not emptyTrash and len(args) < 2):
+    print("expected a callback pid and at least one file")
     return 1
 
-let callbackPid = int(kuroko.argv[1])
+let callbackPid = int(args[0])
 if callbackPid < 1:
     print("suspicious callback pid:", callbackPid)
     return 1
 
-count -= 2
+let files = args[1:]
+let count = len(files)
 
 def show_dialog(msg,title="File Browser",icon="folder"):
     let pid = os.fork()
     if pid == 0:
-        os.execvp('showdialog',['showdialog','--title',title,'--icon',icon,'--cancel-label','No','--okay-label','Yes',*msg])
+        let dialogArgs = ['showdialog','--title',title,'--icon',icon,'--cancel-label','No','--okay-label','Yes']
+        if isinstance(msg, str):
+            dialogArgs.append(msg)
+        else:
+            for item in msg:
+                dialogArgs.append(item)
+        os.execvp('showdialog', dialogArgs)
         os.exit(1)
     while True:
         let result = _waitpid.waitpid(pid)
@@ -26,13 +42,35 @@ def show_dialog(msg,title="File Browser",icon="folder"):
             continue
         return result[1] == 0
 
-if show_dialog([f'This will permanently delete {count} file{"s" if count != 1 else ""}.','Continue?']):
-    for file in kuroko.argv[2:]:
+def run_and_wait(command):
+    let child = os.fork()
+    if child == 0:
+        os.execvp(command[0], command)
+        os.exit(1)
+    while True:
+        let result = _waitpid.waitpid(child)
+        if result[0] == child:
+            return result[1]
+
+if emptyTrash:
+    if not show_dialog(['This will permanently delete every item in the Recycle Bin.','This action cannot be undone. Continue?'], 'Recycle Bin'):
+        return 1
+    run_and_wait(['razion-trash', 'empty'])
+elif permanent:
+    if not show_dialog([f'This will permanently delete {count} item{"s" if count != 1 else ""}.','This action cannot be undone. Continue?']):
+        return 1
+    for file in files:
         try:
             os.remove(file)
         except Exception as e:
-            if not show_dialog(f'An error occured while trying to delete "{file}":\n{e.arg}'):
+            if not show_dialog(f'An error occurred while trying to delete "{file}":\n{e.arg}'):
                 break
-    os.kill(callbackPid, 21) # SIGURG
 else:
-    return 1
+    if not show_dialog([f'Move {count} item{"s" if count != 1 else ""} to the Recycle Bin?','You can restore them later.'], 'Recycle Bin'):
+        return 1
+    let trashArgs = ['razion-trash', 'put']
+    for file in files:
+        trashArgs.append(file)
+    run_and_wait(trashArgs)
+
+os.kill(callbackPid, 21) # SIGURG

@@ -164,3 +164,29 @@ razion-ai-status providers
 The utility reports service and provider state only; it is not a chatbot.
 Provider availability reflects a real adapter health probe, including whether
 Ollama is reachable and has a usable installed model.
+
+## Non-blocking requests
+
+Graphical applications should not wait synchronously on a provider. They can
+start a request, return to the event loop, and poll it on later iterations:
+
+```c
+razion_ai_async_request_t pending;
+razion_ai_response_t response;
+
+if (!razion_ai_request_begin(&ai, RAZION_AI_OP_CHAT,
+        "Explain virtual memory", RAZION_AI_FLAG_NONE, &pending)) {
+    /* Keep processing window events here. */
+    int state = razion_ai_request_poll(&pending, &response);
+    if (state == 0) {
+        /* Still running. */
+    } else if (state > 0 && response.status == RAZION_AI_STATUS_OK) {
+        printf("%s\n", response.payload);
+    }
+}
+```
+
+`razion_ai_request_cancel()` closes an unfinished request. The stream helper
+uses the same provider-independent route, but IPC protocol version 1 invokes
+the callback once with the completed bounded response. It must not be treated
+as true token-by-token streaming until a chunked protocol revision is added.

@@ -11,6 +11,7 @@ log-out,exit,Log Out
 exec calculator,calculator,Calculator
 exec file-browser,folder,File Browser
 exec terminal pulse,utilities-terminal,Razion Pulse
+exec terminal razion-chat,utilities-terminal,Razion AI Chat
 exec terminal,utilities-terminal,Terminal
 :demos
 exec drawlines,drawlines,Draw Lines
@@ -21,6 +22,7 @@ exec polygons,polygons,Polygons
 :games
 exec mines.krk,mines,Mines
 :system
+exec settings,applications-generic,Settings
 exec terminal sysinfo,system-monitor,System Information
 exec gsudo package-manager,package,Package Manager
 exec wallpaper-picker,wallpaper-picker,Select Wallpaper

@@ -72,6 +72,7 @@ enum {
 	RAZION_AI_FLAG_ALLOW_CLOUD    = 1 << 2,
 	RAZION_AI_FLAG_EXECUTE_ACTION = 1 << 3,
 	RAZION_AI_FLAG_USER_CONFIRMED = 1 << 4,
+	RAZION_AI_FLAG_BYPASS_CACHE   = 1 << 5,
 };
 
 typedef struct {
@@ -106,6 +107,23 @@ typedef struct {
 } razion_ai_context_t;
 
 /**
+ * An in-flight request created by razion_ai_request_begin(). The transport is
+ * intentionally opaque so applications can keep AI work outside their UI
+ * event loop without depending on PEX internals.
+ */
+typedef struct {
+	void * transport;
+	uint32_t request_id;
+	int timeout_ms;
+	int active;
+} razion_ai_async_request_t;
+
+typedef int (*razion_ai_stream_callback_t)(
+	const char * data,
+	size_t length,
+	void * user_data);
+
+/**
  * Initialize an application context. Application identifiers are included in
  * audit metadata and should be stable, short names such as "file-browser".
  */
@@ -123,6 +141,42 @@ extern int razion_ai_request(
 	razion_ai_operation_t operation,
 	const char * input,
 	uint32_t flags,
+	razion_ai_response_t * response);
+
+/**
+ * Start an AI request without waiting for its response. Call
+ * razion_ai_request_poll() from the application's existing event loop.
+ */
+extern int razion_ai_request_begin(
+	razion_ai_context_t * context,
+	razion_ai_operation_t operation,
+	const char * input,
+	uint32_t flags,
+	razion_ai_async_request_t * request);
+
+/**
+ * Poll an asynchronous request. Returns 1 when a response is ready, 0 while
+ * it is pending, and -1 on a transport or protocol error.
+ */
+extern int razion_ai_request_poll(
+	razion_ai_async_request_t * request,
+	int timeout_ms,
+	razion_ai_response_t * response);
+
+/** Cancel and release a pending request transport. */
+extern void razion_ai_request_cancel(razion_ai_async_request_t * request);
+
+/**
+ * Deliver a completed response through a callback. Provider adapters may
+ * later emit multiple chunks without changing application call sites.
+ */
+extern int razion_ai_request_stream(
+	razion_ai_context_t * context,
+	razion_ai_operation_t operation,
+	const char * input,
+	uint32_t flags,
+	razion_ai_stream_callback_t callback,
+	void * user_data,
 	razion_ai_response_t * response);
 
 extern int razion_ai_ask(

@@ -1,11 +1,15 @@
 /**
  * @brief RazionOS semantic design tokens.
  *
- * Razion Dark is the initial production theme. Light tokens are provided as
- * an architectural baseline; runtime theme selection remains future work.
+ * Theme selection is read once per process from ~/.razion/theme.conf. This
+ * keeps drawing paths fast while allowing new applications to honor the
+ * user's Dark or Light preference.
  */
 #pragma once
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <toaru/graphics.h>
 
 /* Razion Dark */
@@ -40,18 +44,40 @@
 #define RAZION_LIGHT_SELECTION         rgb(181,231,225)
 #define RAZION_LIGHT_FOCUS             rgb(0,137,126)
 
+static inline int razion_theme_is_light(void) {
+	static int cached = -1;
+	if (cached >= 0) return cached;
+	cached = 0;
+	const char * home = getenv("HOME");
+	if (!home) return cached;
+	char path[512];
+	int written = snprintf(path, sizeof(path), "%s/.razion/theme.conf", home);
+	if (written < 0 || (size_t)written >= sizeof(path)) return cached;
+	FILE * config = fopen(path, "r");
+	if (!config) return cached;
+	char line[64];
+	while (fgets(line, sizeof(line), config)) {
+		if (!strncmp(line, "theme=light", 11)) {
+			cached = 1;
+			break;
+		}
+	}
+	fclose(config);
+	return cached;
+}
+
 /* Active aliases. Keep consumers semantic rather than palette-specific. */
-#define RAZION_BACKGROUND        RAZION_DARK_BACKGROUND
-#define RAZION_SURFACE           RAZION_DARK_SURFACE
-#define RAZION_SURFACE_SECONDARY RAZION_DARK_SURFACE_SECONDARY
-#define RAZION_SURFACE_HOVER     RAZION_DARK_SURFACE_HOVER
-#define RAZION_BORDER            RAZION_DARK_BORDER
-#define RAZION_TEXT_PRIMARY      RAZION_DARK_TEXT_PRIMARY
-#define RAZION_TEXT_SECONDARY    RAZION_DARK_TEXT_SECONDARY
-#define RAZION_ACCENT            RAZION_DARK_ACCENT
-#define RAZION_ACCENT_HOVER      RAZION_DARK_ACCENT_HOVER
-#define RAZION_SUCCESS           RAZION_DARK_SUCCESS
-#define RAZION_WARNING           RAZION_DARK_WARNING
-#define RAZION_ERROR             RAZION_DARK_ERROR
-#define RAZION_SELECTION         RAZION_DARK_SELECTION
-#define RAZION_FOCUS             RAZION_DARK_FOCUS
+#define RAZION_BACKGROUND        (razion_theme_is_light() ? RAZION_LIGHT_BACKGROUND : RAZION_DARK_BACKGROUND)
+#define RAZION_SURFACE           (razion_theme_is_light() ? RAZION_LIGHT_SURFACE : RAZION_DARK_SURFACE)
+#define RAZION_SURFACE_SECONDARY (razion_theme_is_light() ? RAZION_LIGHT_SURFACE_SECONDARY : RAZION_DARK_SURFACE_SECONDARY)
+#define RAZION_SURFACE_HOVER     (razion_theme_is_light() ? RAZION_LIGHT_SURFACE_HOVER : RAZION_DARK_SURFACE_HOVER)
+#define RAZION_BORDER            (razion_theme_is_light() ? RAZION_LIGHT_BORDER : RAZION_DARK_BORDER)
+#define RAZION_TEXT_PRIMARY      (razion_theme_is_light() ? RAZION_LIGHT_TEXT_PRIMARY : RAZION_DARK_TEXT_PRIMARY)
+#define RAZION_TEXT_SECONDARY    (razion_theme_is_light() ? RAZION_LIGHT_TEXT_SECONDARY : RAZION_DARK_TEXT_SECONDARY)
+#define RAZION_ACCENT            (razion_theme_is_light() ? RAZION_LIGHT_ACCENT : RAZION_DARK_ACCENT)
+#define RAZION_ACCENT_HOVER      (razion_theme_is_light() ? RAZION_LIGHT_ACCENT_HOVER : RAZION_DARK_ACCENT_HOVER)
+#define RAZION_SUCCESS           (razion_theme_is_light() ? RAZION_LIGHT_SUCCESS : RAZION_DARK_SUCCESS)
+#define RAZION_WARNING           (razion_theme_is_light() ? RAZION_LIGHT_WARNING : RAZION_DARK_WARNING)
+#define RAZION_ERROR             (razion_theme_is_light() ? RAZION_LIGHT_ERROR : RAZION_DARK_ERROR)
+#define RAZION_SELECTION         (razion_theme_is_light() ? RAZION_LIGHT_SELECTION : RAZION_DARK_SELECTION)
+#define RAZION_FOCUS             (razion_theme_is_light() ? RAZION_LIGHT_FOCUS : RAZION_DARK_FOCUS)

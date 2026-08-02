@@ -29,6 +29,7 @@
 #define ENGINE_CONFIG "/etc/razion-ai.conf"
 #define DEFAULT_AUDIT_LOG "/var/log/razion-ai.log"
 #define MAX_PROVIDERS 24
+#define MAX_CACHE_ENTRIES 16
 
 typedef struct {
 	int local_first;
@@ -39,6 +40,10 @@ typedef struct {
 	int provider_timeout_ms;
 	int health_timeout_ms;
 	int health_cache_seconds;
+	int provider_retries;
+	int retry_delay_ms;
+	int response_cache_enabled;
+	int response_cache_seconds;
 	razion_ai_provider_descriptor_t providers[MAX_PROVIDERS];
 	size_t provider_count;
 } engine_config_t;
@@ -47,8 +52,22 @@ typedef struct {
 	int known;
 	int available;
 	time_t checked_at;
+	uint32_t requests;
+	uint32_t successes;
+	uint32_t failures;
 	char detail[96];
 } provider_health_t;
+
+typedef struct {
+	int valid;
+	time_t stored_at;
+	uint16_t operation;
+	uint32_t flags;
+	uint32_t capabilities;
+	char app_id[RAZION_AI_MAX_APP_ID];
+	char input[RAZION_AI_MAX_PAYLOAD];
+	razion_ai_response_t response;
+} response_cache_entry_t;
 
 static engine_config_t engine_config = {
 	.local_first = 1,
@@ -59,9 +78,17 @@ static engine_config_t engine_config = {
 	.provider_timeout_ms = 5000,
 	.health_timeout_ms = 1000,
 	.health_cache_seconds = 5,
+	.provider_retries = 1,
+	.retry_delay_ms = 100,
+	.response_cache_enabled = 1,
+	.response_cache_seconds = 30,
 };
 static provider_health_t provider_health[MAX_PROVIDERS];
 static uint32_t provider_health_request_id = 0xE0000000U;
+static response_cache_entry_t response_cache[MAX_CACHE_ENTRIES];
+static size_t response_cache_next = 0;
+static uint32_t response_cache_hits = 0;
+static uint32_t response_cache_misses = 0;
 
 _Static_assert(sizeof(razion_ai_request_t) <= MAX_PACKET_SIZE,
 	"Razion AI requests must fit in one PEX packet");
@@ -144,6 +171,29 @@ static void load_config(void) {
 	} else if (engine_config.health_cache_seconds > 60) {
 		engine_config.health_cache_seconds = 60;
 	}
+	engine_config.provider_retries =
+		confreader_intd(config, "engine", "provider_retries", 1);
+	if (engine_config.provider_retries < 0) {
+		engine_config.provider_retries = 0;
+	} else if (engine_config.provider_retries > 3) {
+		engine_config.provider_retries = 3;
+	}
+	engine_config.retry_delay_ms =
+		confreader_intd(config, "engine", "retry_delay_ms", 100);
+	if (engine_config.retry_delay_ms < 0) {
+		engine_config.retry_delay_ms = 0;
+	} else if (engine_config.retry_delay_ms > 2000) {
+		engine_config.retry_delay_ms = 2000;
+	}
+	engine_config.response_cache_enabled =
+		confreader_intd(config, "engine", "response_cache_enabled", 1);
+	engine_config.response_cache_seconds =
+		confreader_intd(config, "engine", "response_cache_seconds", 30);
+	if (engine_config.response_cache_seconds < 1) {
+		engine_config.response_cache_seconds = 1;
+	} else if (engine_config.response_cache_seconds > 3600) {
+		engine_config.response_cache_seconds = 3600;
+	}
 	strncpy(engine_config.audit_log,
 		confreader_getd(config, "engine", "audit_log", DEFAULT_AUDIT_LOG),
 		sizeof(engine_config.audit_log) - 1);
@@ -178,6 +228,78 @@ static void set_provider_health(
 	} else {
 		provider_health[index].detail[0] = '\0';
 	}
+}
+
+static int cacheable_operation(uint16_t operation) {
+	switch (operation) {
+		case RAZION_AI_OP_ASK:
+		case RAZION_AI_OP_SUMMARIZE:
+		case RAZION_AI_OP_GENERATE_CODE:
+		case RAZION_AI_OP_EXPLAIN_ERROR:
+		case RAZION_AI_OP_CLASSIFY_INTENT:
+			return 1;
+		default:
+			return 0;
+	}
+}
+
+static uint32_t cache_flags(uint32_t flags) {
+	return flags & (RAZION_AI_FLAG_LOCAL_ONLY | RAZION_AI_FLAG_ALLOW_CLOUD);
+}
+
+static int response_cache_lookup(
+	razion_ai_request_t * request,
+	razion_ai_response_t * response) {
+
+	if (!engine_config.response_cache_enabled ||
+		(request->flags & RAZION_AI_FLAG_BYPASS_CACHE) ||
+		!cacheable_operation(request->operation)) return 0;
+
+	time_t now = time(NULL);
+	for (size_t i = 0; i < MAX_CACHE_ENTRIES; ++i) {
+		response_cache_entry_t * entry = &response_cache[i];
+		if (!entry->valid) continue;
+		if (now - entry->stored_at > engine_config.response_cache_seconds) {
+			entry->valid = 0;
+			continue;
+		}
+		if (entry->operation != request->operation ||
+			entry->flags != cache_flags(request->flags) ||
+			entry->capabilities != request->requested_capabilities ||
+			strcmp(entry->app_id, request->app_id) ||
+			strcmp(entry->input, request->payload)) continue;
+		memcpy(response, &entry->response, sizeof(*response));
+		response->request_id = request->request_id;
+		response_cache_hits++;
+		return 1;
+	}
+	response_cache_misses++;
+	return 0;
+}
+
+static void response_cache_store(
+	razion_ai_request_t * request,
+	const razion_ai_response_t * response) {
+
+	if (!engine_config.response_cache_enabled ||
+		(request->flags & RAZION_AI_FLAG_BYPASS_CACHE) ||
+		!cacheable_operation(request->operation) ||
+		response->status != RAZION_AI_STATUS_OK) return;
+
+	response_cache_entry_t * entry = &response_cache[response_cache_next];
+	response_cache_next = (response_cache_next + 1) % MAX_CACHE_ENTRIES;
+	memset(entry, 0, sizeof(*entry));
+	entry->valid = 1;
+	entry->stored_at = time(NULL);
+	entry->operation = request->operation;
+	entry->flags = cache_flags(request->flags);
+	entry->capabilities = request->requested_capabilities;
+	size_t app_id_length = strlen(request->app_id);
+	memcpy(entry->app_id, request->app_id, app_id_length);
+	entry->app_id[app_id_length] = '\0';
+	memcpy(entry->input, request->payload, request->payload_length);
+	entry->input[request->payload_length] = '\0';
+	memcpy(&entry->response, response, sizeof(entry->response));
 }
 
 static int provider_is_available(size_t index) {
@@ -371,12 +493,15 @@ static void health_response(
 
 	char message[RAZION_AI_MAX_PAYLOAD];
 	snprintf(message, sizeof(message),
-		"engine=ready;protocol=%d;providers=%d;available=%d;local_first=%s;cloud=%s",
+		"engine=ready;protocol=%d;providers=%d;available=%d;local_first=%s;cloud=%s;cache=%s;cache_hits=%u;cache_misses=%u;retries=%d",
 		RAZION_AI_PROTOCOL_VERSION,
 		(int)engine_config.provider_count,
 		(int)available,
 		engine_config.local_first ? "on" : "off",
-		engine_config.allow_cloud ? "opt-in" : "disabled");
+		engine_config.allow_cloud ? "opt-in" : "disabled",
+		engine_config.response_cache_enabled ? "on" : "off",
+		response_cache_hits, response_cache_misses,
+		engine_config.provider_retries);
 	set_response(response, request, RAZION_AI_STATUS_OK, "engine", message);
 }
 
@@ -390,12 +515,15 @@ static void provider_list_response(
 		razion_ai_provider_descriptor_t * provider = &engine_config.providers[i];
 		int available = provider_is_available(i);
 		int written = snprintf(message + used, sizeof(message) - used,
-			"%s%s:%s:%s:priority=%d:detail=%s",
+			"%s%s:%s:%s:priority=%d:requests=%u:successes=%u:failures=%u:detail=%s",
 			used ? ";" : "",
 			provider->name,
 			provider->provider_class == RAZION_AI_PROVIDER_LOCAL ? "local" : "cloud",
 			available ? "available" : "unavailable",
 			provider->priority,
+			provider_health[i].requests,
+			provider_health[i].successes,
+			provider_health[i].failures,
 			provider_health[i].detail[0] ?
 				provider_health[i].detail : "none");
 		if (written < 0 || (size_t)written >= sizeof(message) - used) break;
@@ -497,7 +625,19 @@ static int route_to_provider(
 			razion_ai_provider_descriptor_t * provider =
 				&engine_config.providers[selected];
 			*last_provider = provider->name;
-			if (!forward_to_provider(selected, provider, request, response)) return 0;
+			for (int attempt = 0;
+				attempt <= engine_config.provider_retries; ++attempt) {
+				provider_health[selected].requests++;
+				if (!forward_to_provider(selected, provider, request, response)) {
+					provider_health[selected].successes++;
+					return 0;
+				}
+				provider_health[selected].failures++;
+				if (attempt < engine_config.provider_retries &&
+					engine_config.retry_delay_ms) {
+					usleep(engine_config.retry_delay_ms * 1000);
+				}
+			}
 		}
 	}
 
@@ -551,8 +691,14 @@ static void handle_request(
 			return;
 	}
 
+	if (response_cache_lookup(request, response)) return;
+
 	const char * last_provider = NULL;
 	int routed = route_to_provider(request, response, &last_provider);
+	if (!routed) {
+		response_cache_store(request, response);
+		return;
+	}
 	if (routed == -1) {
 		set_response(response, request, RAZION_AI_STATUS_NO_PROVIDER,
 			"engine", "No compatible provider is available under the current privacy policy.");

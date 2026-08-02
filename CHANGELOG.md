@@ -2,6 +2,35 @@
 
 All notable RazionOS milestone changes are recorded here.
 
+## Unreleased — Modern desktop milestone
+
+### Added
+
+- Modern File Manager operations: create, rename, copy, cut, paste, safe and
+  permanent deletion, properties, current-folder search, sorting, multiple
+  selection, context menus, keyboard shortcuts, and same-window folder drag
+- Per-user Recycle Bin with collision-safe storage, metadata, restore, size,
+  empty, cross-filesystem moves, desktop launcher, and confirmation before
+  permanent deletion
+- Wallpaper placement modes with PNG/JPG/JPEG discovery, preview, persistence,
+  desktop context access, and a native Settings application
+- Razion AI response cache, configurable retries, health statistics, async SDK
+  begin/poll/cancel operations, Razion Chat, and Settings integration
+
+### Verified
+
+- Clean x86_64 build and bootable BIOS/UEFI ISO generation
+- VirtualBox desktop boot, graphical folder creation, Recycle Bin move and
+  restore, Settings launch, and graceful AI-provider-unavailable behavior
+
+### Known limitations
+
+- Protocol version 1 returns one completed response to the stream callback;
+  true multi-chunk streaming requires a protocol update
+- Ollama and models are optional external components and are not bundled
+- Cloud providers stay disabled pending verified TLS and protected key storage
+- Cross-window file drag payloads are not available in the current compositor
+
 ## 0.1 Alpha
 
 First public milestone.

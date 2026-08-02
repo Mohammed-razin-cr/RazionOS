@@ -41,6 +41,9 @@ static struct TTKButton _set = {0};
 static struct TTKButton _close = {0};
 static struct TTKButton _left = {0};
 static struct TTKButton _right = {0};
+static struct TTKButton _mode = {0};
+static int wallpaper_mode = 0; /* 0 = fill, 1 = center, 2 = stretch */
+static char mode_title[32];
 
 static list_t * wallpapers = NULL;
 static node_t * current_wallpaper = NULL;
@@ -64,7 +67,14 @@ static void redraw(void) {
 	int nw = (int)(y * (float)wallpaper.width);
 
 	/* Scale the wallpaper into the buffer. */
-	if (nw <= width) {
+	if (wallpaper_mode == 2) {
+		draw_sprite_scaled(ctx, &wallpaper, bounds.left_width,
+			bounds.top_height, max_width, max_height);
+	} else if (wallpaper_mode == 1) {
+		draw_sprite(ctx, &wallpaper,
+			bounds.left_width + (max_width - wallpaper.width) / 2,
+			bounds.top_height + (max_height - wallpaper.height) / 2);
+	} else if (nw <= width) {
 		/* Scaled wallpaper is wider, height should match. */
 		draw_sprite_scaled(ctx, &wallpaper, bounds.left_width + ((int)max_width - nw) / 2, bounds.top_height, nw+2, max_height);
 	} else {
@@ -84,6 +94,7 @@ static void redraw(void) {
 	ttk_button_draw(ctx, &_close);
 	ttk_button_draw(ctx, &_left);
 	ttk_button_draw(ctx, &_right);
+	ttk_button_draw(ctx, &_mode);
 
 	/* Draw window decorations */
 	render_decorations(window, ctx, title_str);
@@ -128,6 +139,15 @@ void setup_buttons(void) {
 	_right.height = BUTTON_WIDTH;
 	_right.x = ctx->width - bounds.right_width - BUTTON_HEIGHT - BUTTON_PADDING;
 	_right.y = bounds.top_height + (ctx->height - BUTTON_WIDTH) / 2;
+
+	const char * value = wallpaper_mode == 1 ? "Center" :
+		wallpaper_mode == 2 ? "Stretch" : "Fill";
+	snprintf(mode_title, sizeof(mode_title), "Mode: %s", value);
+	_mode.title = mode_title;
+	_mode.width = 110;
+	_mode.height = BUTTON_HEIGHT;
+	_mode.x = bounds.left_width + BUTTON_PADDING;
+	_mode.y = ctx->height - bounds.bottom_height - BUTTON_HEIGHT - BUTTON_PADDING;
 }
 
 void resize_finish(int w, int h) {
@@ -141,17 +161,19 @@ void resize_finish(int w, int h) {
 }
 
 void set_hilight(struct TTKButton * button, int hilight) {
-	if (!button && (_set.hilight || _close.hilight || _left.hilight || _right.hilight)) {
+	if (!button && (_set.hilight || _close.hilight || _left.hilight || _right.hilight || _mode.hilight)) {
 		_set.hilight = 0;
 		_close.hilight = 0;
 		_left.hilight = 0;
 		_right.hilight = 0;
+		_mode.hilight = 0;
 		redraw();
 	} else if (button && (button->hilight != hilight)) {
 		_set.hilight = 0;
 		_close.hilight = 0;
 		_left.hilight = 0;
 		_right.hilight = 0;
+		_mode.hilight = 0;
 		button->hilight = hilight;
 		redraw();
 	}
@@ -193,7 +215,10 @@ void get_default_wallpaper(void) {
 			}
 			if (strstr(line, "wallpaper=") == line) {
 				wallpaper_path = strdup(line+strlen("wallpaper="));
-				break;
+			} else if (strstr(line, "mode=") == line) {
+				char * value = line + strlen("mode=");
+				wallpaper_mode = !strcmp(value, "center") ? 1 :
+					!strcmp(value, "stretch") ? 2 : 0;
 			}
 		}
 		fclose(conf);
@@ -205,7 +230,9 @@ void set_wallpaper(void) {
 	pid_t child = fork();
 
 	if (!child) {
-		char * args[] = {"set-wallpaper.sh", wallpaper_path, NULL};
+		char * mode = wallpaper_mode == 1 ? "center" :
+			wallpaper_mode == 2 ? "stretch" : "fill";
+		char * args[] = {"set-wallpaper.sh", wallpaper_path, mode, NULL};
 		exit(execvp(args[0], args));
 	}
 }
@@ -228,8 +255,12 @@ void read_wallpapers(void) {
 		}
 		char tmp[strlen(WALLPAPERS_PATH)+strlen(ent->d_name)+2];
 		sprintf(tmp, "%s/%s", WALLPAPERS_PATH, ent->d_name);
-
-		list_insert(wallpapers, strdup(tmp));
+		char * extension = strrchr(ent->d_name, '.');
+		if (extension && (!strcasecmp(extension, ".png") ||
+			!strcasecmp(extension, ".jpg") ||
+			!strcasecmp(extension, ".jpeg"))) {
+			list_insert(wallpapers, strdup(tmp));
+		}
 
 		ent = readdir(dirp);
 	}
@@ -359,6 +390,9 @@ int main(int argc, char * argv[]) {
 									} else if (in_button(&_right, me)) {
 										set_hilight(&_right, 2);
 										_down_button = &_right;
+									} else if (in_button(&_mode, me)) {
+										set_hilight(&_mode, 2);
+										_down_button = &_mode;
 									}
 								} else if (me->command == YUTANI_MOUSE_EVENT_RAISE || me->command == YUTANI_MOUSE_EVENT_CLICK) {
 									if (_down_button) {
@@ -377,6 +411,10 @@ int main(int argc, char * argv[]) {
 												/* Next wallpaper */
 												pick_wallpaper(1);
 												redraw();
+											} else if (_down_button == &_mode) {
+												wallpaper_mode = (wallpaper_mode + 1) % 3;
+												setup_buttons();
+												redraw();
 											}
 											_down_button->hilight = 0;
 										}
@@ -391,8 +429,10 @@ int main(int argc, char * argv[]) {
 										set_hilight(&_close, 1);
 									} else if (in_button(&_left, me)) {
 										set_hilight(&_left, 1);
-									} else if (in_button(&_right, me)) {
-										set_hilight(&_right, 1);
+								} else if (in_button(&_right, me)) {
+									set_hilight(&_right, 1);
+								} else if (in_button(&_mode, me)) {
+									set_hilight(&_mode, 1);
 									} else {
 										set_hilight(NULL,0);
 									}

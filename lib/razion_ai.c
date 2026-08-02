@@ -55,6 +55,74 @@ static int operation_capabilities(razion_ai_operation_t operation) {
 	}
 }
 
+static int prepare_request(
+	razion_ai_context_t * context,
+	razion_ai_operation_t operation,
+	const char * input,
+	uint32_t flags,
+	razion_ai_request_t * request,
+	size_t * request_size) {
+
+	if (!context || !request || !request_size) {
+		errno = EINVAL;
+		return -1;
+	}
+	size_t input_length = input ? strlen(input) : 0;
+	if (input_length >= RAZION_AI_MAX_PAYLOAD) {
+		errno = E2BIG;
+		return -1;
+	}
+
+	memset(request, 0, sizeof(*request));
+	request->magic = RAZION_AI_PROTOCOL_MAGIC;
+	request->version = RAZION_AI_PROTOCOL_VERSION;
+	request->operation = operation;
+	request->request_id = context->next_request_id++;
+	request->flags = context->default_flags | flags;
+	request->requested_capabilities =
+		context->requested_capabilities | operation_capabilities(operation);
+	request->payload_length = input_length;
+	memcpy(request->app_id, context->app_id, sizeof(request->app_id) - 1);
+	request->app_id[sizeof(request->app_id) - 1] = '\0';
+	if (input_length) memcpy(request->payload, input, input_length);
+	*request_size = offsetof(razion_ai_request_t, payload) + input_length;
+	return 0;
+}
+
+static int receive_response(
+	FILE * engine,
+	uint32_t request_id,
+	int timeout_ms,
+	razion_ai_response_t * response) {
+
+	int engine_fd = fileno(engine);
+	if (fswait2(1, &engine_fd, timeout_ms) != 0) return 0;
+
+	char reply_buffer[MAX_PACKET_SIZE];
+	size_t received = pex_recv(engine, reply_buffer);
+	if (received < offsetof(razion_ai_response_t, payload)) {
+		errno = EPROTO;
+		return -1;
+	}
+
+	razion_ai_response_t * reply = (razion_ai_response_t *)reply_buffer;
+	if (reply->magic != RAZION_AI_PROTOCOL_MAGIC ||
+		reply->version != RAZION_AI_PROTOCOL_VERSION ||
+		reply->request_id != request_id ||
+		reply->payload_length >= RAZION_AI_MAX_PAYLOAD ||
+		offsetof(razion_ai_response_t, payload) + reply->payload_length > received) {
+		errno = EPROTO;
+		return -1;
+	}
+
+	memset(response, 0, sizeof(*response));
+	memcpy(response, reply,
+		offsetof(razion_ai_response_t, payload) + reply->payload_length);
+	response->provider[sizeof(response->provider) - 1] = '\0';
+	response->payload[response->payload_length] = '\0';
+	return 1;
+}
+
 int razion_ai_init(razion_ai_context_t * context, const char * app_id) {
 	if (!context || !app_id || !*app_id) {
 		errno = EINVAL;
@@ -77,72 +145,94 @@ int razion_ai_request(
 	uint32_t flags,
 	razion_ai_response_t * response) {
 
-	if (!context || !response) {
+	razion_ai_async_request_t pending;
+	if (razion_ai_request_begin(context, operation, input, flags, &pending)) {
+		return -1;
+	}
+	int result = razion_ai_request_poll(&pending, context->timeout_ms, response);
+	if (result == 1) return 0;
+	if (result == 0) errno = ETIMEDOUT;
+	razion_ai_request_cancel(&pending);
+	return -1;
+}
+
+int razion_ai_request_begin(
+	razion_ai_context_t * context,
+	razion_ai_operation_t operation,
+	const char * input,
+	uint32_t flags,
+	razion_ai_async_request_t * pending) {
+
+	if (!pending) {
 		errno = EINVAL;
 		return -1;
 	}
-
-	size_t input_length = input ? strlen(input) : 0;
-	if (input_length >= RAZION_AI_MAX_PAYLOAD) {
-		errno = E2BIG;
-		return -1;
-	}
-
+	memset(pending, 0, sizeof(*pending));
 	razion_ai_request_t request;
-	memset(&request, 0, sizeof(request));
-	request.magic = RAZION_AI_PROTOCOL_MAGIC;
-	request.version = RAZION_AI_PROTOCOL_VERSION;
-	request.operation = operation;
-	request.request_id = context->next_request_id++;
-	request.flags = context->default_flags | flags;
-	request.requested_capabilities =
-		context->requested_capabilities | operation_capabilities(operation);
-	request.payload_length = input_length;
-	memcpy(request.app_id, context->app_id, sizeof(request.app_id) - 1);
-	request.app_id[sizeof(request.app_id) - 1] = '\0';
-	if (input_length) memcpy(request.payload, input, input_length);
+	size_t request_size;
+	if (prepare_request(context, operation, input, flags,
+		&request, &request_size)) return -1;
 
 	FILE * engine = pex_connect(RAZION_AI_ENDPOINT);
 	if (!engine) return -1;
-
-	size_t request_size = offsetof(razion_ai_request_t, payload) + input_length;
 	if (pex_reply(engine, request_size, (char *)&request) != request_size) {
 		fclose(engine);
 		errno = EIO;
 		return -1;
 	}
+	pending->transport = engine;
+	pending->request_id = request.request_id;
+	pending->timeout_ms = context->timeout_ms;
+	pending->active = 1;
+	return 0;
+}
 
-	int engine_fd = fileno(engine);
-	if (fswait2(1, &engine_fd, context->timeout_ms) != 0) {
-		fclose(engine);
-		errno = ETIMEDOUT;
+int razion_ai_request_poll(
+	razion_ai_async_request_t * pending,
+	int timeout_ms,
+	razion_ai_response_t * response) {
+
+	if (!pending || !pending->active || !pending->transport || !response) {
+		errno = EINVAL;
 		return -1;
 	}
+	if (timeout_ms < 0) timeout_ms = pending->timeout_ms;
+	int result = receive_response(
+		(FILE *)pending->transport, pending->request_id, timeout_ms, response);
+	if (result != 0) {
+		fclose((FILE *)pending->transport);
+		pending->transport = NULL;
+		pending->active = 0;
+	}
+	return result;
+}
 
-	char reply_buffer[MAX_PACKET_SIZE];
-	size_t received = pex_recv(engine, reply_buffer);
-	fclose(engine);
+void razion_ai_request_cancel(razion_ai_async_request_t * pending) {
+	if (!pending) return;
+	if (pending->transport) fclose((FILE *)pending->transport);
+	memset(pending, 0, sizeof(*pending));
+}
 
-	if (received < offsetof(razion_ai_response_t, payload)) {
-		errno = EPROTO;
+int razion_ai_request_stream(
+	razion_ai_context_t * context,
+	razion_ai_operation_t operation,
+	const char * input,
+	uint32_t flags,
+	razion_ai_stream_callback_t callback,
+	void * user_data,
+	razion_ai_response_t * response) {
+
+	if (!callback || !response) {
+		errno = EINVAL;
 		return -1;
 	}
-
-	razion_ai_response_t * reply = (razion_ai_response_t *)reply_buffer;
-	if (reply->magic != RAZION_AI_PROTOCOL_MAGIC ||
-		reply->version != RAZION_AI_PROTOCOL_VERSION ||
-		reply->request_id != request.request_id ||
-		reply->payload_length >= RAZION_AI_MAX_PAYLOAD ||
-		offsetof(razion_ai_response_t, payload) + reply->payload_length > received) {
-		errno = EPROTO;
-		return -1;
+	if (razion_ai_request(context, operation, input, flags, response)) return -1;
+	if (response->status == RAZION_AI_STATUS_OK && response->payload_length) {
+		if (callback(response->payload, response->payload_length, user_data)) {
+			errno = ECANCELED;
+			return -1;
+		}
 	}
-
-	memset(response, 0, sizeof(*response));
-	memcpy(response, reply,
-		offsetof(razion_ai_response_t, payload) + reply->payload_length);
-	response->provider[sizeof(response->provider) - 1] = '\0';
-	response->payload[response->payload_length] = '\0';
 	return 0;
 }
 

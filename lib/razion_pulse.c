@@ -103,6 +103,10 @@ razion_pulse_status_t razion_pulse_propose_action(
 		set_proposal(proposal, RAZION_PULSE_ACTION_OPEN_SYSTEM_MONITOR,
 			RAZION_PULSE_RISK_READ, RAZION_PULSE_CAP_APP_LAUNCH, 0, 1,
 			"open-system-monitor", "/bin/cpuwidget", "Open System Monitor");
+	} else if (!strcmp(normalized, "open-settings")) {
+		set_proposal(proposal, RAZION_PULSE_ACTION_OPEN_SETTINGS,
+			RAZION_PULSE_RISK_READ, RAZION_PULSE_CAP_APP_LAUNCH, 0, 1,
+			"open-settings", "/bin/settings", "Open Settings");
 	} else if (!strcmp(normalized, "open-wallpaper-settings")) {
 		set_proposal(proposal, RAZION_PULSE_ACTION_OPEN_WALLPAPER_SETTINGS,
 			RAZION_PULSE_RISK_READ, RAZION_PULSE_CAP_APP_LAUNCH, 0, 1,
@@ -178,6 +182,9 @@ razion_pulse_status_t razion_pulse_propose(
 	} else if (has(normalized, "open") &&
 		(has(normalized, "system monitor") || has(normalized, "task manager"))) {
 		action_id = "open-system-monitor";
+	} else if (has(normalized, "open") &&
+		(has(normalized, "settings") || has(normalized, "preferences"))) {
+		action_id = "open-settings";
 	} else if ((has(normalized, "open") || has(normalized, "change")) &&
 		(has(normalized, "wallpaper") || has(normalized, "background"))) {
 		action_id = "open-wallpaper-settings";
@@ -256,6 +263,7 @@ static razion_pulse_status_t open_application(
 		case RAZION_PULSE_ACTION_OPEN_CALCULATOR: executable = "/bin/calculator"; break;
 		case RAZION_PULSE_ACTION_OPEN_FILE_BROWSER: executable = "/bin/file-browser"; break;
 		case RAZION_PULSE_ACTION_OPEN_SYSTEM_MONITOR: executable = "/bin/cpuwidget"; break;
+		case RAZION_PULSE_ACTION_OPEN_SETTINGS: executable = "/bin/settings"; break;
 		case RAZION_PULSE_ACTION_OPEN_WALLPAPER_SETTINGS:
 			executable = "/bin/wallpaper-picker";
 			break;

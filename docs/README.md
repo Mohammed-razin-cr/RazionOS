@@ -7,6 +7,8 @@
 - [VirtualBox](VIRTUALBOX.md) — tested virtual-machine configuration and
   historical baseline evidence
 - [Changelog](../CHANGELOG.md) — public milestone summary
+- [Modern desktop milestone](DESKTOP_MILESTONE.md) — File Manager, Recycle Bin,
+  wallpaper, Settings, AI responsiveness, limitations, and verification
 
 ## Architecture and design records
 

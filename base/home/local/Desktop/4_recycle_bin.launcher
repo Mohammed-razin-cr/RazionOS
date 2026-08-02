@@ -1,0 +1,3 @@
+icon=folder
+run=razion-trash init ; exec file-browser ~/.local/share/Trash/files
+title=Recycle Bin

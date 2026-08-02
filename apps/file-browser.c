@@ -78,6 +78,8 @@ static struct File ** file_pointers = NULL; /* List of file pointers */
 static ssize_t file_pointers_len = 0; /* How many files are in the current list */
 static uint64_t last_click = 0; /* For double click */
 static int last_click_offset = -1; /* So that clicking two different things quickly doesn't count as a double click */
+static int drag_source_offset = -1;
+static int dragging_files = 0;
 static struct TT_Font * tt_font_thin = NULL;
 static struct TT_Font * tt_font_bold = NULL;
 
@@ -87,6 +89,16 @@ static struct MenuEntry * _menu_entry_show_list  = NULL;
 static struct MenuEntry * _menu_entry_up = NULL;
 static struct MenuEntry * _menu_entry_up_ctx_a = NULL;
 static struct MenuEntry * _menu_entry_up_ctx_b = NULL;
+static struct MenuEntry * _menu_entry_trash = NULL;
+static struct MenuEntry * _menu_entry_restore = NULL;
+static struct MenuEntry * _menu_entry_permanent_delete = NULL;
+static struct MenuEntry * _menu_entry_empty_trash = NULL;
+static struct MenuEntry * _menu_entry_sort_name = NULL;
+static struct MenuEntry * _menu_entry_sort_size = NULL;
+static struct MenuEntry * _menu_entry_sort_type = NULL;
+static struct MenuEntry * _menu_entry_sort_descending = NULL;
+static int sort_mode = 0;
+static int sort_descending = 0;
 
 /**
  * Navigation input box
@@ -97,6 +109,8 @@ static int  nav_bar_cursor_x = 0;
 static int  nav_bar_focused = 0;
 static int  nav_bar_blink = 0;
 static struct timeval nav_bar_last_blinked;
+static int nav_bar_search_mode = 0;
+static char search_query[256] = {0};
 
 /* Status bar displayed at the bottom of the window */
 static char window_status[1024] = {0};
@@ -439,7 +453,10 @@ static void update_status(void) {
 	}
 
 	char tmp_size[50];
-	if (selected_count == 0) {
+	if (selected_count == 0 && search_query[0]) {
+		sprintf(window_status, "%zd result%s for \"%s\"",
+			file_pointers_len, file_pointers_len == 1 ? "" : "s", search_query);
+	} else if (selected_count == 0) {
 		print_human_readable_size(tmp_size, total_size);
 		sprintf(window_status, "%zd item%s (%s)", file_pointers_len, file_pointers_len == 1 ? "" : "s", tmp_size);
 	} else if (selected_count == 1) {
@@ -451,10 +468,26 @@ static void update_status(void) {
 	}
 }
 
+static int contains_case_insensitive(const char * text, const char * query) {
+	if (!query[0]) return 1;
+	for (; *text; ++text) {
+		const char * a = text;
+		const char * b = query;
+		while (*a && *b && tolower((unsigned char)*a) ==
+			tolower((unsigned char)*b)) {
+			a++;
+			b++;
+		}
+		if (!*b) return 1;
+	}
+	return 0;
+}
+
 /**
  * Read the contents of a directory into the icon view.
  */
 static void load_directory(const char * path, int modifies_history) {
+	if (modifies_history) search_query[0] = '\0';
 
 	/* Free the current icon view entries */
 	DIR * dirp = opendir(path);
@@ -568,6 +601,11 @@ static void load_directory(const char * path, int modifies_history) {
 			 (ent->d_name[1] == '.' &&
 			  ent->d_name[2] == '\0'))) {
 			/* skip . and .. */
+			ent = readdir(dirp);
+			continue;
+		}
+		if (search_query[0] &&
+			!contains_case_insensitive(ent->d_name, search_query)) {
 			ent = readdir(dirp);
 			continue;
 		}
@@ -798,12 +836,19 @@ static void load_directory(const char * path, int modifies_history) {
 		/* Launchers before directories before files */
 		if (f1->type > f2->type) return -1;
 		if (f2->type > f1->type) return 1;
-		/* Launchers sorted by filename, not by display name */
-		if (f1->type == 2 && f2->type == 2) {
-			return strcmp(f1->filename, f2->filename);
+		int result;
+		if (sort_mode == 1) {
+			result = f1->size < f2->size ? -1 : f1->size > f2->size ? 1 : 0;
+		} else if (sort_mode == 2) {
+			result = strcmp(f1->filetype, f2->filetype);
+		} else if (f1->type == 2 && f2->type == 2) {
+			/* Launchers sorted by filename, not by display name. */
+			result = strcmp(f1->filename, f2->filename);
+		} else {
+			result = strcmp(f1->name, f2->name);
 		}
-		/* Files sorted by name */
-		return strcmp(f1->name, f2->name);
+		if (!result) result = strcmp(f1->name, f2->name);
+		return sort_descending ? -result : result;
 	}
 	qsort(file_pointers, file_pointers_len, sizeof(struct File *), comparator);
 
@@ -1057,6 +1102,16 @@ static void nav_bar_set_focused(void) {
 	gettimeofday(&nav_bar_last_blinked, NULL);
 }
 
+static void nav_bar_start_search(void) {
+	nav_bar_search_mode = 1;
+	strncpy(nav_bar, search_query, sizeof(nav_bar) - 1);
+	nav_bar[sizeof(nav_bar) - 1] = '\0';
+	nav_bar_cursor = strlen(nav_bar);
+	_recalculate_nav_bar_cursor();
+	nav_bar_set_focused();
+	_redraw_nav_bar();
+}
+
 /**
  * navbar: Text editing helpers for ^W, deletes one directory element
  */
@@ -1252,6 +1307,7 @@ static void draw_background(int width, int height) {
 	sprite_t * wallpaper = malloc(sizeof(sprite_t));
 
 	char * wallpaper_path = WALLPAPER_PATH;
+	char wallpaper_mode[16] = "fill";
 	int free_it = 0;
 	char * home = getenv("HOME");
 	if (home) {
@@ -1270,7 +1326,10 @@ static void draw_background(int width, int height) {
 				if (strstr(line, "wallpaper=") == line) {
 					free_it = 1;
 					wallpaper_path = strdup(line+strlen("wallpaper="));
-					break;
+				} else if (strstr(line, "mode=") == line) {
+					strncpy(wallpaper_mode, line + strlen("mode="),
+						sizeof(wallpaper_mode) - 1);
+					wallpaper_mode[sizeof(wallpaper_mode) - 1] = '\0';
 				}
 			}
 			fclose(c);
@@ -1298,7 +1357,13 @@ static void draw_background(int width, int height) {
 	draw_fill(ctx, rgb(0,0,0));
 
 	/* Scale the wallpaper into the buffer. */
-	if (nw == wallpaper->width && nh == wallpaper->height) {
+	if (!strcmp(wallpaper_mode, "stretch")) {
+		draw_sprite_scaled(ctx, wallpaper, 0, 0, width, height);
+	} else if (!strcmp(wallpaper_mode, "center")) {
+		draw_sprite(ctx, wallpaper,
+			(width - wallpaper->width) / 2,
+			(height - wallpaper->height) / 2);
+	} else if (nw == wallpaper->width && nh == wallpaper->height) {
 		/* No scaling necessary */
 		draw_sprite(ctx, wallpaper, 0, 0);
 	} else if (nw >= width) {
@@ -1409,23 +1474,27 @@ static void _menu_action_help(struct MenuEntry * entry) {
 }
 
 /* [Context] > Copy */
-static void _menu_action_copy(struct MenuEntry * entry) {
-	size_t output_size = 0;
+static void set_file_clipboard(int cut) {
+	const char * header = cut ? "RAZION_FILE_CLIPBOARD_V1\nCUT\n" :
+		"RAZION_FILE_CLIPBOARD_V1\nCOPY\n";
+	size_t output_size = strlen(header);
+	size_t selected_count = 0;
 
 	/* Calculate required space for the clipboard */
 	int base_is_root = !strcmp(current_directory, "/"); /* avoid redundant slash */
 	for (int i = 0; i < file_pointers_len; ++i) {
 		if (file_pointers[i]->selected) {
+			selected_count++;
 			output_size += strlen(current_directory) + !base_is_root + strlen(file_pointers[i]->type == 2 ? file_pointers[i]->filename : file_pointers[i]->name) + 1; /* base / file \n */
 		}
 	}
 
 	/* Nothing to copy? */
-	if (!output_size) return;
+	if (!selected_count) return;
 
 	/* Create the clipboard contents as a LF-separated list of absolute paths */
 	char * clipboard = malloc(output_size+1); /* last nil */
-	clipboard[0] = '\0';
+	strcpy(clipboard, header);
 	for (int i = 0; i < file_pointers_len; ++i) {
 		if (file_pointers[i]->selected) {
 			strcat(clipboard, current_directory);
@@ -1445,22 +1514,44 @@ static void _menu_action_copy(struct MenuEntry * entry) {
 	free(clipboard);
 }
 
+/* [Context] > Copy */
+static void _menu_action_copy(struct MenuEntry * entry) {
+	set_file_clipboard(0);
+}
+
+/* [Context] > Cut */
+static void _menu_action_cut(struct MenuEntry * entry) {
+	set_file_clipboard(1);
+}
+
 static void _menu_action_paste(struct MenuEntry * entry) {
 	yutani_special_request(yctx, NULL, YUTANI_SPECIAL_REQUEST_CLIPBOARD);
 }
 
-static void _menu_action_delete(struct MenuEntry * entry) {
+static int is_recycle_bin_directory(void) {
+	const char * home = getenv("HOME");
+	if (!home || !current_directory) return 0;
+	char path[1024];
+	int written = snprintf(path, sizeof(path),
+		"%s/.local/share/Trash/files", home);
+	return written > 0 && (size_t)written < sizeof(path) &&
+		!strcmp(current_directory, path);
+}
+
+static void run_delete_prompt(int permanent) {
 	size_t filesToDelete = 0;
 	for (int i = 0; i < file_pointers_len; ++i) {
 		if (file_pointers[i]->selected) filesToDelete++;
 	}
+	if (!filesToDelete) return;
 
 	int base_is_root = !strcmp(current_directory, "/"); /* avoid redundant slash */
-	char ** args = malloc(sizeof(char*) * (filesToDelete + 3));
+	char ** args = malloc(sizeof(char*) * (filesToDelete + 4));
 	args[0] = "/bin/prompt_and_delete.krk";
 	args[1] = malloc(100);
 	snprintf(args[1],100,"%d",getpid());
 	size_t counter = 2;
+	if (permanent) args[counter++] = "--permanent";
 	for (int i = 0; i < file_pointers_len; ++i) {
 		if (file_pointers[i]->selected) {
 			const char * name = file_pointers[i]->type == 2 ? file_pointers[i]->filename : file_pointers[i]->name;
@@ -1482,9 +1573,158 @@ static void _menu_action_delete(struct MenuEntry * entry) {
 	}
 
 	for (size_t i = 1; i < counter; ++i) {
-		free(args[i]);
+		if (!permanent || i != 2) free(args[i]);
 	}
 	free(args);
+}
+
+static void _menu_action_delete(struct MenuEntry * entry) {
+	run_delete_prompt(0);
+}
+
+static void _menu_action_permanent_delete(struct MenuEntry * entry) {
+	run_delete_prompt(1);
+}
+
+static void _menu_action_restore(struct MenuEntry * entry) {
+	if (!is_recycle_bin_directory()) return;
+	size_t selected = 0;
+	for (int i = 0; i < file_pointers_len; ++i) {
+		if (file_pointers[i]->selected) selected++;
+	}
+	if (!selected) return;
+
+	char ** args = calloc(selected + 3, sizeof(char *));
+	args[0] = "/bin/razion-trash";
+	args[1] = "restore";
+	size_t argument = 2;
+	for (int i = 0; i < file_pointers_len; ++i) {
+		if (file_pointers[i]->selected) {
+			args[argument++] = file_pointers[i]->type == 2 ?
+				file_pointers[i]->filename : file_pointers[i]->name;
+		}
+	}
+	args[argument] = NULL;
+	pid_t helper = fork();
+	if (!helper) {
+		pid_t worker = fork();
+		if (!worker) _Exit(execv(args[0], args));
+		int status;
+		waitpid(worker, &status, 0);
+		kill(getppid(), SIGURG);
+		_Exit(status);
+	}
+	free(args);
+}
+
+static void _menu_action_empty_trash(struct MenuEntry * entry) {
+	if (!is_recycle_bin_directory()) return;
+	char pid[32];
+	snprintf(pid, sizeof(pid), "%d", getpid());
+	if (!fork()) {
+		char * args[] = {
+			"/bin/prompt_and_delete.krk", pid, "--empty-trash", NULL};
+		_Exit(execv(args[0], args));
+	}
+}
+
+static void launch_name_dialog(const char * operation, const char * target) {
+	char pid[32];
+	snprintf(pid, sizeof(pid), "%d", getpid());
+	if (!fork()) {
+		char * args[] = {"file-name-dialog", (char *)operation,
+			(char *)target, pid, NULL};
+		_Exit(execvp(args[0], args));
+	}
+}
+
+static void _menu_action_new_folder(struct MenuEntry * entry) {
+	launch_name_dialog("--create-folder", current_directory);
+}
+
+static void _menu_action_new_file(struct MenuEntry * entry) {
+	launch_name_dialog("--create-file", current_directory);
+}
+
+static void _menu_action_rename(struct MenuEntry * entry) {
+	struct File * selected = NULL;
+	int selection_count = 0;
+	for (int i = 0; i < file_pointers_len; ++i) {
+		if (file_pointers[i]->selected) {
+			selected = file_pointers[i];
+			selection_count++;
+		}
+	}
+	if (!selected || selection_count != 1) return;
+	const char * name = selected->type == 2 ? selected->filename : selected->name;
+	char path[4096];
+	int written = snprintf(path, sizeof(path), "%s%s%s", current_directory,
+		!strcmp(current_directory, "/") ? "" : "/", name);
+	if (written > 0 && (size_t)written < sizeof(path)) {
+		launch_name_dialog("--rename", path);
+	}
+}
+
+static void _menu_action_properties(struct MenuEntry * entry) {
+	struct File * selected = NULL;
+	int selection_count = 0;
+	for (int i = 0; i < file_pointers_len; ++i) {
+		if (file_pointers[i]->selected) {
+			selected = file_pointers[i];
+			selection_count++;
+		}
+	}
+	if (!selected) return;
+	char path[4096];
+	const char * name = selected->type == 2 ? selected->filename : selected->name;
+	snprintf(path, sizeof(path), "%s%s%s", current_directory,
+		!strcmp(current_directory, "/") ? "" : "/", name);
+	char type[320];
+	char size[128];
+	if (selection_count > 1) {
+		snprintf(type, sizeof(type), "%d selected items", selection_count);
+		size[0] = '\0';
+	} else {
+		snprintf(type, sizeof(type), "Type: %s",
+			selected->type == 1 ? "Folder" : selected->filetype);
+		snprintf(size, sizeof(size), "Size: %llu bytes",
+			(unsigned long long)selected->size);
+	}
+	if (!fork()) {
+		char * args[] = {"showdialog", "--title", "Properties",
+			"--icon", selected->type == 1 ? "folder" : "file",
+			type, size, path, NULL};
+		_Exit(execvp(args[0], args));
+	}
+}
+
+static void move_selected_to_directory(struct File * target) {
+	if (!target || target->type != 1 || !target->name[0]) return;
+	char destination_directory[4096];
+	int written = snprintf(destination_directory, sizeof(destination_directory),
+		"%s%s%s", current_directory,
+		!strcmp(current_directory, "/") ? "" : "/", target->name);
+	if (written < 0 || (size_t)written >= sizeof(destination_directory)) return;
+
+	int moved = 0;
+	for (int i = 0; i < file_pointers_len; ++i) {
+		struct File * item = file_pointers[i];
+		if (!item->selected || item == target) continue;
+		const char * name = item->type == 2 ? item->filename : item->name;
+		char source[4096];
+		char destination[4096];
+		int source_length = snprintf(source, sizeof(source), "%s%s%s",
+			current_directory, !strcmp(current_directory, "/") ? "" : "/", name);
+		int destination_length = snprintf(destination, sizeof(destination),
+			"%s/%s", destination_directory, name);
+		if (source_length < 0 || (size_t)source_length >= sizeof(source) ||
+			destination_length < 0 ||
+			(size_t)destination_length >= sizeof(destination)) continue;
+		struct stat existing;
+		if (!lstat(destination, &existing) || rename(source, destination)) continue;
+		moved = 1;
+	}
+	if (moved) _menu_action_refresh(NULL);
 }
 
 /* Help > About File Browser */
@@ -1617,6 +1857,10 @@ static void _menu_action_select_all(struct MenuEntry * self) {
 	redraw_window();
 }
 
+static void _menu_action_search(struct MenuEntry * self) {
+	if (!is_desktop_background) nav_bar_start_search();
+}
+
 /**
  * Set the view mode for the file view
  * We support three modes:
@@ -1669,6 +1913,21 @@ static void _menu_action_view_mode(struct MenuEntry * entry) {
 	redraw_window();
 }
 
+static void _menu_action_sort(struct MenuEntry * entry) {
+	struct MenuEntry_Normal * item = (void *)entry;
+	if (!strcmp(item->action, "sort-name")) sort_mode = 0;
+	else if (!strcmp(item->action, "sort-size")) sort_mode = 1;
+	else if (!strcmp(item->action, "sort-type")) sort_mode = 2;
+	else if (!strcmp(item->action, "sort-descending")) {
+		sort_descending = !sort_descending;
+	}
+	menu_update_toggle_state(_menu_entry_sort_name, sort_mode == 0);
+	menu_update_toggle_state(_menu_entry_sort_size, sort_mode == 1);
+	menu_update_toggle_state(_menu_entry_sort_type, sort_mode == 2);
+	menu_update_toggle_state(_menu_entry_sort_descending, sort_descending);
+	_menu_action_refresh(NULL);
+}
+
 /**
  * Receive pastes, which are presumed to be file names of files
  * which have been copied and should now be pasted into a new
@@ -1681,7 +1940,19 @@ static void _menu_action_view_mode(struct MenuEntry * entry) {
  * TODO: Handle pastes into the navbar of arbitrary text.
  */
 static void handle_clipboard(char * contents) {
-	fprintf(stderr, "Received clipboard:\n%s\n",contents);
+	int cut = 0;
+	const char * prefix = "RAZION_FILE_CLIPBOARD_V1\n";
+	if (!strncmp(contents, prefix, strlen(prefix))) {
+		contents += strlen(prefix);
+		if (!strncmp(contents, "CUT\n", 4)) {
+			cut = 1;
+			contents += 4;
+		} else if (!strncmp(contents, "COPY\n", 5)) {
+			contents += 5;
+		} else {
+			return;
+		}
+	}
 
 	char * file = contents;
 	while (file && *file) {
@@ -1704,10 +1975,20 @@ static void handle_clipboard(char * contents) {
 			char message[4096];
 			sprintf(message, "showdialog \"File Browser\" /usr/share/icons/48/folder.png \"Not overwriting file '%s'.\"", cheap_basename);
 			launch_application(message);
+		} else if (cut) {
+			if (rename(file, destination)) {
+				char message[4096];
+				sprintf(message, "showdialog \"File Browser\" /usr/share/icons/48/folder.png \"Error moving file '%s'.\"", cheap_basename);
+				launch_application(message);
+			}
 		} else {
-			char cp[1024];
-			sprintf(cp, "cp -r \"%s\" \"%s\"", file, current_directory);
-			if (system(cp)) {
+			pid_t child = fork();
+			if (!child) {
+				char * args[] = {"cp", "-r", file, current_directory, NULL};
+				_Exit(execvp(args[0], args));
+			}
+			int status = 1;
+			if (child < 0 || waitpid(child, &status, 0) < 0 || status) {
 				char message[4096];
 				sprintf(message, "showdialog \"File Browser\" /usr/share/icons/48/folder.png \"Error copying file '%s'.\"", cheap_basename);
 				launch_application(message);
@@ -1717,6 +1998,7 @@ static void handle_clipboard(char * contents) {
 	}
 
 	_menu_action_refresh(NULL);
+	if (cut) yutani_set_clipboard(yctx, "");
 }
 
 /**
@@ -1948,6 +2230,12 @@ static void show_context_menu(struct yutani_msg_window_mouse_event * me) {
 			}
 		}
 
+		int in_recycle_bin = is_recycle_bin_directory();
+		menu_update_enabled(_menu_entry_trash, !in_recycle_bin);
+		menu_update_enabled(_menu_entry_restore, in_recycle_bin);
+		menu_update_enabled(_menu_entry_permanent_delete, 1);
+		menu_update_enabled(_menu_entry_empty_trash, in_recycle_bin);
+
 		if (_have_selection) {
 			menu_show_at(context_menu, main_window, me->new_x, me->new_y);
 		} else {
@@ -2030,14 +2318,20 @@ int main(int argc, char * argv[]) {
 		menu_bar.set = menu_set_create();
 
 		struct MenuList * m = menu_create(); /* File */
+		menu_insert(m, menu_create_normal("folder",NULL,"New Folder", _menu_action_new_folder));
+		menu_insert(m, menu_create_normal("file",NULL,"New File", _menu_action_new_file));
+		menu_insert(m, menu_create_separator());
 		menu_insert(m, menu_create_normal("exit",NULL,"Exit", _menu_action_exit));
 		menu_set_insert(menu_bar.set, "file", m);
 
 		m = menu_create();
+		menu_insert(m, menu_create_normal(NULL,NULL,"Cut",_menu_action_cut));
 		menu_insert(m, menu_create_normal(NULL,NULL,"Copy",_menu_action_copy));
 		menu_insert(m, menu_create_normal(NULL,NULL,"Paste",_menu_action_paste));
+		menu_insert(m, menu_create_normal(NULL,NULL,"Rename",_menu_action_rename));
 		menu_insert(m, menu_create_separator());
 		menu_insert(m, menu_create_normal(NULL,NULL,"Select all",_menu_action_select_all));
+		menu_insert(m, menu_create_normal(NULL,NULL,"Search (Ctrl+F)",_menu_action_search));
 		menu_set_insert(menu_bar.set, "edit", m);
 
 		m = menu_create();
@@ -2048,6 +2342,15 @@ int main(int argc, char * argv[]) {
 		menu_insert(m, (_menu_entry_show_list  = menu_create_toggle("list", "Show List",  view_mode == VIEW_MODE_LIST,  _menu_action_view_mode)));
 		menu_insert(m, menu_create_separator());
 		menu_insert(m, menu_create_toggle(NULL,"Show Hidden Files", 0, _menu_action_toggle_hidden));
+		menu_insert(m, menu_create_separator());
+		menu_insert(m, (_menu_entry_sort_name = menu_create_toggle(
+			"sort-name", "Sort by Name", 1, _menu_action_sort)));
+		menu_insert(m, (_menu_entry_sort_size = menu_create_toggle(
+			"sort-size", "Sort by Size", 0, _menu_action_sort)));
+		menu_insert(m, (_menu_entry_sort_type = menu_create_toggle(
+			"sort-type", "Sort by Type", 0, _menu_action_sort)));
+		menu_insert(m, (_menu_entry_sort_descending = menu_create_toggle(
+			"sort-descending", "Descending", 0, _menu_action_sort)));
 		menu_set_insert(menu_bar.set, "view", m);
 
 		m = menu_create(); /* Go */
@@ -2069,10 +2372,19 @@ int main(int argc, char * argv[]) {
 	menu_insert(context_menu, menu_create_normal(NULL,NULL,"Open",_menu_action_open));
 	menu_insert(context_menu, menu_create_normal(NULL,NULL,"Edit in Bim",_menu_action_edit));
 	menu_insert(context_menu, menu_create_separator());
+	menu_insert(context_menu, menu_create_normal(NULL,NULL,"Cut",_menu_action_cut));
 	menu_insert(context_menu, menu_create_normal(NULL,NULL,"Copy",_menu_action_copy));
 	menu_insert(context_menu, menu_create_normal(NULL,NULL,"Paste",_menu_action_paste));
+	menu_insert(context_menu, menu_create_normal(NULL,NULL,"Rename",_menu_action_rename));
 	menu_insert(context_menu, menu_create_separator());
-	menu_insert(context_menu, menu_create_normal(NULL,NULL,"Delete",_menu_action_delete));
+	menu_insert(context_menu, (_menu_entry_trash =
+		menu_create_normal(NULL,NULL,"Move to Recycle Bin",_menu_action_delete)));
+	menu_insert(context_menu, (_menu_entry_restore =
+		menu_create_normal(NULL,NULL,"Restore",_menu_action_restore)));
+	menu_insert(context_menu, (_menu_entry_permanent_delete =
+		menu_create_normal(NULL,NULL,"Delete Permanently",_menu_action_permanent_delete)));
+	menu_insert(context_menu, menu_create_separator());
+	menu_insert(context_menu, menu_create_normal(NULL,NULL,"Properties",_menu_action_properties));
 	if (!is_desktop_background) {
 		menu_insert(context_menu, menu_create_separator());
 		menu_insert(context_menu, (_menu_entry_up_ctx_a = menu_create_normal("up",NULL,"Up",_menu_action_up)));
@@ -2081,13 +2393,24 @@ int main(int argc, char * argv[]) {
 	menu_insert(context_menu, menu_create_normal("utilities-terminal","terminal","Open Terminal",launch_application_menu));
 
 	directory_context_menu = menu_create(); /* the other right click menu */
+	menu_insert(directory_context_menu, menu_create_normal("folder",NULL,"New Folder",_menu_action_new_folder));
+	menu_insert(directory_context_menu, menu_create_normal("file",NULL,"New File",_menu_action_new_file));
+	if (is_desktop_background) {
+		menu_insert(directory_context_menu,
+			menu_create_normal("wallpaper-picker","wallpaper-picker",
+				"Change Wallpaper",launch_application_menu));
+	}
+	menu_insert(directory_context_menu, menu_create_separator());
 	menu_insert(directory_context_menu, menu_create_normal(NULL,NULL,"Paste",_menu_action_paste));
+	menu_insert(directory_context_menu, (_menu_entry_empty_trash =
+		menu_create_normal(NULL,NULL,"Empty Recycle Bin",_menu_action_empty_trash)));
 	menu_insert(directory_context_menu, menu_create_separator());
 	if (!is_desktop_background) {
 		menu_insert(directory_context_menu, (_menu_entry_up_ctx_b = menu_create_normal("up",NULL,"Up",_menu_action_up)));
 	}
 	menu_insert(directory_context_menu, menu_create_normal("refresh",NULL,"Refresh",_menu_action_refresh));
 	menu_insert(directory_context_menu, menu_create_normal("utilities-terminal","terminal","Open Terminal",launch_application_menu));
+	menu_insert(directory_context_menu, menu_create_normal(NULL,NULL,"Properties",_menu_action_properties));
 
 
 	history_back = list_create();
@@ -2151,6 +2474,11 @@ int main(int argc, char * argv[]) {
 								switch (ke->event.key) {
 									case KEY_ESCAPE:
 										nav_bar_focused = 0;
+										if (nav_bar_search_mode) {
+											nav_bar_search_mode = 0;
+											strncpy(nav_bar, current_directory, sizeof(nav_bar) - 1);
+											nav_bar[sizeof(nav_bar) - 1] = '\0';
+										}
 										redraw_window();
 										break;
 									case KEY_BACKSPACE:
@@ -2165,8 +2493,18 @@ int main(int argc, char * argv[]) {
 										break;
 									case '\n':
 										nav_bar_focused = 0;
-										char * tmp = strdup(nav_bar);
-										load_directory(tmp, 1);
+										char * tmp;
+										if (nav_bar_search_mode) {
+											strncpy(search_query, nav_bar, sizeof(search_query) - 1);
+											search_query[sizeof(search_query) - 1] = '\0';
+											nav_bar_search_mode = 0;
+											tmp = strdup(current_directory);
+											load_directory(tmp, 0);
+										} else {
+											tmp = strdup(nav_bar);
+											load_directory(tmp, 1);
+										}
+										free(tmp);
 										reinitialize_contents();
 										redraw_window();
 										break;
@@ -2217,8 +2555,41 @@ int main(int argc, char * argv[]) {
 										_menu_action_up(NULL);
 									}
 									break;
+								case KEY_DEL:
+									if (ke->event.modifiers & YUTANI_KEY_MODIFIER_SHIFT) {
+										_menu_action_permanent_delete(NULL);
+									} else {
+										_menu_action_delete(NULL);
+									}
+									break;
+								case KEY_F2:
+									_menu_action_rename(NULL);
+									break;
 								case '\n':
 									_menu_action_open(NULL);
+									break;
+								case 'a':
+									if (ke->event.modifiers & YUTANI_KEY_MODIFIER_CTRL) {
+										_menu_action_select_all(NULL);
+									}
+									break;
+								case 'c':
+									if (ke->event.modifiers & YUTANI_KEY_MODIFIER_CTRL) {
+										_menu_action_copy(NULL);
+									}
+									break;
+								case 'x':
+									if (ke->event.modifiers & YUTANI_KEY_MODIFIER_CTRL) {
+										_menu_action_cut(NULL);
+									}
+									break;
+								case 'n':
+									if ((ke->event.modifiers & YUTANI_KEY_MODIFIER_CTRL) &&
+										(ke->event.modifiers & YUTANI_KEY_MODIFIER_SHIFT)) {
+										_menu_action_new_folder(NULL);
+									} else if (ke->event.modifiers & YUTANI_KEY_MODIFIER_CTRL) {
+										_menu_action_new_file(NULL);
+									}
 									break;
 								case 'l':
 									if (ke->event.modifiers & YUTANI_KEY_MODIFIER_CTRL && !is_desktop_background) {
@@ -2227,7 +2598,9 @@ int main(int argc, char * argv[]) {
 									}
 									break;
 								case 'f':
-									if (ke->event.modifiers & YUTANI_KEY_MODIFIER_ALT && menu_bar_height) {
+									if (ke->event.modifiers & YUTANI_KEY_MODIFIER_CTRL && !is_desktop_background) {
+										nav_bar_start_search();
+									} else if (ke->event.modifiers & YUTANI_KEY_MODIFIER_ALT && menu_bar_height) {
 										menu_bar_show_menu(yctx,main_window,&menu_bar,-1,&menu_entries[0]);
 									}
 									break;
@@ -2237,7 +2610,9 @@ int main(int argc, char * argv[]) {
 									}
 									break;
 								case 'v':
-									if (ke->event.modifiers & YUTANI_KEY_MODIFIER_ALT && menu_bar_height) {
+									if (ke->event.modifiers & YUTANI_KEY_MODIFIER_CTRL) {
+										_menu_action_paste(NULL);
+									} else if (ke->event.modifiers & YUTANI_KEY_MODIFIER_ALT && menu_bar_height) {
 										menu_bar_show_menu(yctx,main_window,&menu_bar,-1,&menu_entries[2]);
 									}
 									break;
@@ -2431,7 +2806,33 @@ int main(int argc, char * argv[]) {
 									redraw = 1;
 								}
 
-								if (me->command == YUTANI_MOUSE_EVENT_CLICK || _close_enough(me)) {
+								if (me->command == YUTANI_MOUSE_EVENT_DOWN &&
+									(me->buttons & YUTANI_MOUSE_BUTTON_LEFT)) {
+									drag_source_offset = hilighted_offset;
+									dragging_files = 0;
+								} else if (me->command == YUTANI_MOUSE_EVENT_DRAG &&
+									drag_source_offset >= 0 &&
+									(me->buttons & YUTANI_MOUSE_BUTTON_LEFT)) {
+									if (!dragging_files) {
+										struct File * source = get_file_at_offset(drag_source_offset);
+										if (source && !source->selected) {
+											toggle_selected(drag_source_offset, me->modifiers);
+										}
+										dragging_files = 1;
+										yutani_window_show_mouse(yctx, main_window,
+											YUTANI_CURSOR_TYPE_DRAG);
+									}
+								}
+
+								if (dragging_files &&
+									me->command == YUTANI_MOUSE_EVENT_RAISE) {
+									move_selected_to_directory(
+										get_file_at_offset(hilighted_offset));
+									dragging_files = 0;
+									drag_source_offset = -1;
+									yutani_window_show_mouse(yctx, main_window,
+										YUTANI_CURSOR_TYPE_RESET);
+								} else if (me->command == YUTANI_MOUSE_EVENT_CLICK || _close_enough(me)) {
 									struct File * f = get_file_at_offset(hilighted_offset);
 									if (f) {
 										if (last_click_offset == hilighted_offset && precise_time_since(last_click) < 400) {

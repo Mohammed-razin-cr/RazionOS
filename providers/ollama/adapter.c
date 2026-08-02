@@ -281,7 +281,7 @@ static int discover_model(
 	if (http_request(context, "GET", "/api/tags", NULL, &response, &status)) {
 		free(response);
 		snprintf(detail, detail_size,
-			"Ollama is not reachable at %s:%d (%s)",
+			"Ollama is not reachable at %.64s:%d (%.48s)",
 			context->host, context->port, last_http_error);
 		return -1;
 	}
