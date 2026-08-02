@@ -2,10 +2,10 @@
 
 ## Current status
 
-Phases 1 and 2 establish Razion AI as an operating-system service and add
-Razion Pulse as its safe command interface. RazionOS does not ship a chatbot,
-bundle a model, contact a cloud provider by default, or grant AI unrestricted
-system access.
+Phases 1 and 2 establish Razion AI as an operating-system service, add Razion
+Pulse as its safe command interface, and provide an operational isolated
+Ollama adapter. RazionOS does not ship a chatbot, bundle a model, contact a
+cloud provider by default, or grant AI unrestricted system access.
 
 Implemented components:
 
@@ -23,6 +23,11 @@ Implemented components:
 - Razion Pulse Phase 2 command interface and native action broker
 - offline intent classification with validated local-provider fallback
 - canonical action proposals with risk, capability, and confirmation policy
+- a common provider interface covering lifecycle, health, latency, chat,
+  streaming, summarization, embeddings, vision, speech, cancellation, and
+  capabilities
+- an isolated Ollama adapter with bounded HTTP/JSON handling, automatic local
+  model discovery, real health probes, and explicit unsupported capabilities
 
 ## System position
 
@@ -87,9 +92,15 @@ lowest-priority-number provider in the preferred class. Local providers are
 evaluated first by default. Cloud providers require both system-level
 `allow_cloud=1` and an application request carrying `ALLOW_CLOUD`.
 
-Phase 1 defines entries for Ollama, OpenAI, Gemini, Groq, OpenRouter, and
-Hugging Face. Ollama is registered as the preferred local adapter endpoint,
-but no model runtime or adapter is bundled yet. Cloud entries are disabled.
+The initial configuration defines entries for Ollama, Groq, Gemini,
+OpenRouter, Hugging Face, Anthropic, and OpenAI. Ollama is the only enabled
+entry and is the preferred local adapter. It uses a separate service and
+localhost-only configuration by default. Ollama itself and model weights are
+not bundled. Cloud entries are disabled.
+
+The engine checks adapter health through the provider protocol, caches the
+result briefly, and treats connection failures, timeouts, malformed responses,
+and unavailable/internal results as failover conditions.
 
 ## Security model
 
@@ -118,5 +129,6 @@ brokers; it must never pass generated text directly to a shell.
 4. Insight diagnostics.
 5. Memory activity index.
 6. Natural-language settings.
-7. Optional local inference adapter and model management.
-8. Stable third-party SDK release.
+7. **Complete baseline:** operational Ollama text adapter; future work adds
+   optional model management and richer inference capabilities.
+8. Stable third-party SDK and plugin release.

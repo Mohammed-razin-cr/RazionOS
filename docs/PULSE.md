@@ -12,6 +12,8 @@ Phase 2 provides:
 - a native `libtoaru_razion_pulse` application API
 - deterministic offline classification for common operating-system requests
 - local-only AI Engine classification fallback for unknown wording
+- operational local Ollama classification when a runtime and model are
+  configured, with deterministic offline behavior when they are not
 - a bounded action vocabulary and canonical proposal validation
 - risk labels, capability checks, explicit confirmation, and metadata-only
   auditing
@@ -36,9 +38,10 @@ User request
 
 The local classifier covers the standard Pulse vocabulary without a model or
 network connection. If it does not recognize the wording, Pulse may submit a
-`CLASSIFY_INTENT` request to the AI Engine with `LOCAL_ONLY`. A provider may
-return only a known action identifier such as `open-downloads`. Any other
-response is rejected.
+`CLASSIFY_INTENT` request to the AI Engine with `LOCAL_ONLY`. The Ollama
+adapter uses a constrained classification prompt when a local runtime and
+model are available. A provider may return only a known action identifier such
+as `open-downloads`. Any other response is rejected.
 
 ## Command interface
 
@@ -126,4 +129,5 @@ header automatically.
 - Phase 5 supplies the activity index used by `summarize-today`.
 - Privileged network and package actions require separate authenticated
   brokers before they can become executable.
-- Phase 7 may add an optional local model adapter for broader phrasing.
+- Later provider work may add streaming, embeddings, vision, speech, and model
+  management; the initial Ollama text adapter is operational.

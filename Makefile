@@ -51,6 +51,8 @@ APPS_SH_X=$(foreach app,$(APPS_SH),$(BASE)/bin/$(app))
 APPS_KRK=$(patsubst apps/%.krk,%.krk,$(wildcard apps/*.krk))
 APPS_KRK_X=$(foreach app,$(APPS_KRK),$(BASE)/bin/$(app))
 
+PROVIDER_APPS_X=$(BASE)/bin/razion-ai-provider-ollama
+
 # These are defined but TESTS_X is not included in the required ramdisk build;
 # if you want to build the tests, use "make tests". Cleaning will remove them.
 TESTS=$(patsubst tests/%.c,%,$(wildcard tests/*.c))
@@ -94,7 +96,7 @@ misaka-kernel: ${KERNEL_ASMOBJS} ${KERNEL_OBJS} kernel/arch/${ARCH}/link.ld
 $(BASE)/mod/%.ko: modules/%.c | dirs
 	${CC} -c ${KERNEL_CFLAGS} -fno-pie -mcmodel=large  -o $@ $<
 
-ramdisk.tar: $(wildcard $(BASE)/* $(BASE)/*/* $(BASE)/*/*/* $(BASE)/*/*/*/* $(BASE)/*/*/*/*/* $(BASE)/home/*/.*) $(APPS_X) $(LIBS_X) $(KRK_MODS_X) $(BASE)/bin/kuroko $(BASE)/bin/bim $(BIM_FILES) $(BASE)/lib/libm.so $(APPS_KRK_X) $(KRK_MODS) $(APPS_SH_X) $(MODULES) $(BASE)/etc/issue $(BASE)/etc/os-release LICENSE NOTICE.md AUTHORS bim/LICENSE kuroko/LICENSE util/createramdisk.krk | $(TOOLCHAIN)/local/bin/kuroko
+ramdisk.tar: $(wildcard $(BASE)/* $(BASE)/*/* $(BASE)/*/*/* $(BASE)/*/*/*/* $(BASE)/*/*/*/*/* $(BASE)/home/*/.*) $(APPS_X) $(PROVIDER_APPS_X) $(LIBS_X) $(KRK_MODS_X) $(BASE)/bin/kuroko $(BASE)/bin/bim $(BIM_FILES) $(BASE)/lib/libm.so $(APPS_KRK_X) $(KRK_MODS) $(APPS_SH_X) $(MODULES) $(BASE)/etc/issue $(BASE)/etc/os-release LICENSE NOTICE.md AUTHORS bim/LICENSE kuroko/LICENSE util/createramdisk.krk | $(TOOLCHAIN)/local/bin/kuroko
 	kuroko util/createramdisk.krk
 
 ramdisk.igz: ramdisk.tar
@@ -151,7 +153,7 @@ clean:
 	-rm -f misaka-kernel misaka-kernel.64
 	-rm -f ramdisk.tar ramdisk.igz 
 	-rm -f $(APPS_Y) $(LIBS_Y) $(KRK_MODS_Y) $(KRK_MODS) $(TESTS_Y)
-	-rm -f $(APPS_X) $(LIBS_X) $(KRK_MODS_X) $(APPS_KRK_X) $(APPS_SH_X) $(TESTS_X)
+	-rm -f $(APPS_X) $(PROVIDER_APPS_X) $(LIBS_X) $(KRK_MODS_X) $(APPS_KRK_X) $(APPS_SH_X) $(TESTS_X)
 	-rm -f $(BIM_FILES) $(BASE)/bin/bim
 	-rm -f $(CRTS)
 	-rm -f $(BASE)/lib/libc.so $(BASE)/lib/libc.a
@@ -251,6 +253,9 @@ $(BASE)/bin/gsudo: apps/sudo.c
 $(BASE)/bin/mv: apps/cp.c apps/rm.c
 $(BASE)/bin/splash-log: kernel/misc/args.c
 $(BASE)/bin/kcmdline: kernel/misc/args.c
+
+$(BASE)/bin/razion-ai-provider-ollama: providers/ollama/adapter.c base/usr/include/toaru/razion_ai.h base/usr/include/toaru/razion_ai_provider.h | $(BASE)/lib/libtoaru_confreader.so $(BASE)/lib/libtoaru_json.so $(BASE)/lib/libtoaru_hashmap.so $(BASE)/lib/libtoaru_list.so $(BASE)/lib/libtoaru_pex.so $(LC)
+	$(CC) $(CFLAGS) -o $@ $< -ltoaru_confreader -ltoaru_json -ltoaru_hashmap -ltoaru_list -ltoaru_pex
 
 .PHONY: libs
 libs: $(LIBS_X)

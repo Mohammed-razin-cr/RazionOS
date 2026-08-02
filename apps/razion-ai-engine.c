@@ -37,9 +37,18 @@ typedef struct {
 	int audit_enabled;
 	char audit_log[160];
 	int provider_timeout_ms;
+	int health_timeout_ms;
+	int health_cache_seconds;
 	razion_ai_provider_descriptor_t providers[MAX_PROVIDERS];
 	size_t provider_count;
 } engine_config_t;
+
+typedef struct {
+	int known;
+	int available;
+	time_t checked_at;
+	char detail[96];
+} provider_health_t;
 
 static engine_config_t engine_config = {
 	.local_first = 1,
@@ -48,7 +57,11 @@ static engine_config_t engine_config = {
 	.audit_enabled = 1,
 	.audit_log = DEFAULT_AUDIT_LOG,
 	.provider_timeout_ms = 5000,
+	.health_timeout_ms = 1000,
+	.health_cache_seconds = 5,
 };
+static provider_health_t provider_health[MAX_PROVIDERS];
+static uint32_t provider_health_request_id = 0xE0000000U;
 
 _Static_assert(sizeof(razion_ai_request_t) <= MAX_PACKET_SIZE,
 	"Razion AI requests must fit in one PEX packet");
@@ -117,6 +130,20 @@ static void load_config(void) {
 	} else if (engine_config.provider_timeout_ms > 30000) {
 		engine_config.provider_timeout_ms = 30000;
 	}
+	engine_config.health_timeout_ms =
+		confreader_intd(config, "engine", "health_timeout_ms", 1000);
+	if (engine_config.health_timeout_ms < 100) {
+		engine_config.health_timeout_ms = 100;
+	} else if (engine_config.health_timeout_ms > 5000) {
+		engine_config.health_timeout_ms = 5000;
+	}
+	engine_config.health_cache_seconds =
+		confreader_intd(config, "engine", "health_cache_seconds", 5);
+	if (engine_config.health_cache_seconds < 1) {
+		engine_config.health_cache_seconds = 1;
+	} else if (engine_config.health_cache_seconds > 60) {
+		engine_config.health_cache_seconds = 60;
+	}
 	strncpy(engine_config.audit_log,
 		confreader_getd(config, "engine", "audit_log", DEFAULT_AUDIT_LOG),
 		sizeof(engine_config.audit_log) - 1);
@@ -133,18 +160,101 @@ static void load_config(void) {
 	confreader_free(config);
 }
 
-static int provider_is_available(razion_ai_provider_descriptor_t * provider) {
+static void set_provider_health(
+	size_t index,
+	int available,
+	const char * detail) {
+
+	provider_health[index].known = 1;
+	provider_health[index].available = available;
+	provider_health[index].checked_at = time(NULL);
+	if (detail) {
+		size_t detail_length = strlen(detail);
+		if (detail_length >= sizeof(provider_health[index].detail)) {
+			detail_length = sizeof(provider_health[index].detail) - 1;
+		}
+		memcpy(provider_health[index].detail, detail, detail_length);
+		provider_health[index].detail[detail_length] = '\0';
+	} else {
+		provider_health[index].detail[0] = '\0';
+	}
+}
+
+static int provider_is_available(size_t index) {
+	razion_ai_provider_descriptor_t * provider = &engine_config.providers[index];
+	time_t now = time(NULL);
+	if (provider_health[index].known &&
+		now - provider_health[index].checked_at <
+			engine_config.health_cache_seconds) {
+		return provider_health[index].available;
+	}
+
 	FILE * endpoint = pex_connect(provider->endpoint);
-	if (!endpoint) return 0;
+	if (!endpoint) {
+		set_provider_health(index, 0, "adapter-unreachable");
+		return 0;
+	}
+
+	razion_ai_request_t request;
+	memset(&request, 0, sizeof(request));
+	request.magic = RAZION_AI_PROTOCOL_MAGIC;
+	request.version = RAZION_AI_PROTOCOL_VERSION;
+	request.operation = RAZION_AI_OP_PROVIDER_HEALTH;
+	request.request_id = provider_health_request_id++;
+	strncpy(request.app_id, "razion-ai-engine", sizeof(request.app_id) - 1);
+
+	size_t request_size = offsetof(razion_ai_request_t, payload);
+	if (pex_reply(endpoint, request_size, (char *)&request) != request_size) {
+		fclose(endpoint);
+		set_provider_health(index, 0, "health-send-failed");
+		return 0;
+	}
+
+	int provider_fd = fileno(endpoint);
+	if (fswait2(1, &provider_fd, engine_config.health_timeout_ms) != 0) {
+		fclose(endpoint);
+		set_provider_health(index, 0, "health-timeout");
+		return 0;
+	}
+
+	char buffer[MAX_PACKET_SIZE];
+	size_t received = pex_recv(endpoint, buffer);
 	fclose(endpoint);
-	return 1;
+	if (received < offsetof(razion_ai_response_t, payload)) {
+		set_provider_health(index, 0, "invalid-health-response");
+		return 0;
+	}
+
+	razion_ai_response_t * response = (razion_ai_response_t *)buffer;
+	int available =
+		response->magic == RAZION_AI_PROTOCOL_MAGIC &&
+		response->version == RAZION_AI_PROTOCOL_VERSION &&
+		response->request_id == request.request_id &&
+		response->status == RAZION_AI_STATUS_OK &&
+		response->payload_length < RAZION_AI_MAX_PAYLOAD &&
+		offsetof(razion_ai_response_t, payload) + response->payload_length <=
+			received;
+	char detail[sizeof(provider_health[index].detail)];
+	size_t detail_length = response->payload_length;
+	if (detail_length >= sizeof(detail)) detail_length = sizeof(detail) - 1;
+	if (offsetof(razion_ai_response_t, payload) + detail_length <= received) {
+		memcpy(detail, response->payload, detail_length);
+		detail[detail_length] = '\0';
+	} else {
+		strncpy(detail, "invalid-health-detail", sizeof(detail) - 1);
+		detail[sizeof(detail) - 1] = '\0';
+	}
+	set_provider_health(index, available, detail);
+	return available;
 }
 
 static int provider_matches(
-	razion_ai_provider_descriptor_t * provider,
+	size_t provider_index,
 	razion_ai_request_t * request,
 	razion_ai_provider_class_t provider_class) {
 
+	razion_ai_provider_descriptor_t * provider =
+		&engine_config.providers[provider_index];
 	if (!provider->enabled || provider->provider_class != provider_class) return 0;
 	if ((provider->capabilities & request->requested_capabilities) !=
 		request->requested_capabilities) return 0;
@@ -155,7 +265,7 @@ static int provider_matches(
 		if (request->flags & RAZION_AI_FLAG_LOCAL_ONLY) return 0;
 	}
 
-	return provider_is_available(provider);
+	return provider_is_available(provider_index);
 }
 
 static int select_provider(
@@ -167,7 +277,7 @@ static int select_provider(
 	for (size_t i = 0; i < engine_config.provider_count; ++i) {
 		if (attempted[i]) continue;
 		razion_ai_provider_descriptor_t * candidate = &engine_config.providers[i];
-		if (!provider_matches(candidate, request, provider_class)) continue;
+		if (!provider_matches(i, request, provider_class)) continue;
 		if (selected < 0 ||
 			candidate->priority < engine_config.providers[selected].priority) {
 			selected = i;
@@ -220,6 +330,8 @@ static const char * operation_name(uint16_t operation) {
 		case RAZION_AI_OP_DOCUMENT_SEARCH: return "document-search";
 		case RAZION_AI_OP_SETTINGS_REQUEST: return "settings-request";
 		case RAZION_AI_OP_CLASSIFY_INTENT: return "classify-intent";
+		case RAZION_AI_OP_PROVIDER_HEALTH: return "provider-health";
+		case RAZION_AI_OP_PROVIDER_CAPABILITIES: return "provider-capabilities";
 		default: return "unknown";
 	}
 }
@@ -254,7 +366,7 @@ static void health_response(
 
 	size_t available = 0;
 	for (size_t i = 0; i < engine_config.provider_count; ++i) {
-		if (provider_is_available(&engine_config.providers[i])) available++;
+		if (provider_is_available(i)) available++;
 	}
 
 	char message[RAZION_AI_MAX_PAYLOAD];
@@ -276,13 +388,16 @@ static void provider_list_response(
 	size_t used = 0;
 	for (size_t i = 0; i < engine_config.provider_count; ++i) {
 		razion_ai_provider_descriptor_t * provider = &engine_config.providers[i];
+		int available = provider_is_available(i);
 		int written = snprintf(message + used, sizeof(message) - used,
-			"%s%s:%s:%s:priority=%d",
+			"%s%s:%s:%s:priority=%d:detail=%s",
 			used ? ";" : "",
 			provider->name,
 			provider->provider_class == RAZION_AI_PROVIDER_LOCAL ? "local" : "cloud",
-			provider_is_available(provider) ? "available" : "unavailable",
-			provider->priority);
+			available ? "available" : "unavailable",
+			provider->priority,
+			provider_health[i].detail[0] ?
+				provider_health[i].detail : "none");
 		if (written < 0 || (size_t)written >= sizeof(message) - used) break;
 		used += written;
 	}
@@ -291,30 +406,39 @@ static void provider_list_response(
 }
 
 static int forward_to_provider(
+	size_t provider_index,
 	razion_ai_provider_descriptor_t * provider,
 	razion_ai_request_t * request,
 	razion_ai_response_t * response) {
 
 	FILE * endpoint = pex_connect(provider->endpoint);
-	if (!endpoint) return -1;
+	if (!endpoint) {
+		set_provider_health(provider_index, 0, "adapter-unreachable");
+		return -1;
+	}
 
 	size_t request_size =
 		offsetof(razion_ai_request_t, payload) + request->payload_length;
 	if (pex_reply(endpoint, request_size, (char *)request) != request_size) {
 		fclose(endpoint);
+		set_provider_health(provider_index, 0, "request-send-failed");
 		return -1;
 	}
 
 	int provider_fd = fileno(endpoint);
 	if (fswait2(1, &provider_fd, engine_config.provider_timeout_ms) != 0) {
 		fclose(endpoint);
+		set_provider_health(provider_index, 0, "request-timeout");
 		return -1;
 	}
 
 	char buffer[MAX_PACKET_SIZE];
 	size_t received = pex_recv(endpoint, buffer);
 	fclose(endpoint);
-	if (received < offsetof(razion_ai_response_t, payload)) return -1;
+	if (received < offsetof(razion_ai_response_t, payload)) {
+		set_provider_health(provider_index, 0, "invalid-provider-response");
+		return -1;
+	}
 
 	razion_ai_response_t * provider_response = (razion_ai_response_t *)buffer;
 	if (provider_response->magic != RAZION_AI_PROTOCOL_MAGIC ||
@@ -322,6 +446,7 @@ static int forward_to_provider(
 		provider_response->request_id != request->request_id ||
 		provider_response->payload_length >= RAZION_AI_MAX_PAYLOAD ||
 		offsetof(razion_ai_response_t, payload) + provider_response->payload_length > received) {
+		set_provider_health(provider_index, 0, "invalid-provider-response");
 		return -1;
 	}
 
@@ -332,6 +457,14 @@ static int forward_to_provider(
 	response->granted_capabilities &=
 		provider->capabilities & request->requested_capabilities;
 	response->payload[response->payload_length] = '\0';
+	set_provider_health(provider_index,
+		response->status != RAZION_AI_STATUS_PROVIDER_UNAVAILABLE,
+		response->status == RAZION_AI_STATUS_PROVIDER_UNAVAILABLE ?
+			response->payload : "request-complete");
+	if (response->status == RAZION_AI_STATUS_PROVIDER_UNAVAILABLE ||
+		response->status == RAZION_AI_STATUS_INTERNAL_ERROR) {
+		return -1;
+	}
 	return 0;
 }
 
@@ -364,7 +497,7 @@ static int route_to_provider(
 			razion_ai_provider_descriptor_t * provider =
 				&engine_config.providers[selected];
 			*last_provider = provider->name;
-			if (!forward_to_provider(provider, request, response)) return 0;
+			if (!forward_to_provider(selected, provider, request, response)) return 0;
 		}
 	}
 

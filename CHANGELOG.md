@@ -26,6 +26,12 @@ First public milestone.
 - Safe native Pulse actions for launching selected applications, opening
   standard directories, reporting memory use, and creating a fixed Python
   project without overwriting existing files
+- Isolated Ollama provider service with a common provider interface, automatic
+  installed-model discovery, bounded local HTTP/JSON requests, real health
+  reporting, latency tracking, local-only defaults, and graceful offline
+  behavior
+- Health-aware provider selection and failover with short-lived status caching
+- Provider manager and AI security/privacy documentation
 
 ### Verified
 

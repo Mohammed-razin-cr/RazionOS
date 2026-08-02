@@ -14,6 +14,10 @@ generator recognizes the header and adds the library automatically.
 Applications talk to `/dev/pex/razion-ai`; they do not select endpoints,
 format provider-specific HTTP requests, or handle provider credentials.
 
+Provider implementers use `<toaru/razion_ai_provider.h>`. Its common interface
+keeps provider-specific behavior behind isolated adapter services and requires
+unsupported capabilities to be reported explicitly.
+
 ## Initialize
 
 ```c
@@ -158,3 +162,5 @@ razion-ai-status providers
 ```
 
 The utility reports service and provider state only; it is not a chatbot.
+Provider availability reflects a real adapter health probe, including whether
+Ollama is reachable and has a usable installed model.

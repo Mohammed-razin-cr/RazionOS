@@ -12,6 +12,10 @@
 
 - [Razion AI architecture](AI_ARCHITECTURE.md) — engine, IPC, Pulse,
   provider routing, security boundary, and roadmap
+- [AI provider manager](AI_PROVIDER_MANAGER.md) — common provider interface,
+  Ollama adapter, health-aware routing, and configuration
+- [AI security and privacy](AI_SECURITY.md) — trust boundaries, local-first
+  policy, data handling, and fail-closed behavior
 - [Razion AI SDK](AI_SDK.md) — native application API and result handling
 - [Razion Pulse](PULSE.md) — implemented safe operating-system command
   interface and native action policy
