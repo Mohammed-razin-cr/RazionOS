@@ -253,6 +253,7 @@ $(BASE)/bin/gsudo: apps/sudo.c
 $(BASE)/bin/mv: apps/cp.c apps/rm.c
 $(BASE)/bin/splash-log: kernel/misc/args.c
 $(BASE)/bin/kcmdline: kernel/misc/args.c
+$(BASE)/bin/razion-companion: apps/razion-companion-ui.inc
 
 $(BASE)/bin/razion-ai-provider-ollama: providers/ollama/adapter.c base/usr/include/toaru/razion_ai.h base/usr/include/toaru/razion_ai_provider.h | $(BASE)/lib/libtoaru_confreader.so $(BASE)/lib/libtoaru_json.so $(BASE)/lib/libtoaru_hashmap.so $(BASE)/lib/libtoaru_list.so $(BASE)/lib/libtoaru_pex.so $(LC)
 	$(CC) $(CFLAGS) -o $@ $< -ltoaru_confreader -ltoaru_json -ltoaru_hashmap -ltoaru_list -ltoaru_pex

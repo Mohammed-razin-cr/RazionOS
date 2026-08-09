@@ -5,6 +5,7 @@
  * Artwork is rendered from original geometric silhouettes; no pet assets or
  * third-party runtime services are required.
  */
+#include <ctype.h>
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -23,12 +24,9 @@
 #include <toaru/text.h>
 #include <toaru/yutani.h>
 
-#define CONTROL_WIDTH 900
-#define CONTROL_HEIGHT 620
+#define CONTROL_WIDTH 1160
+#define CONTROL_HEIGHT 690
 #define OVERLAY_SIZE 230
-#define TILE_COLUMNS 6
-#define TILE_WIDTH 86
-#define TILE_HEIGHT 58
 
 #define C_BACKGROUND rgb(8,12,18)
 #define C_PANEL rgb(15,22,31)
@@ -329,17 +327,6 @@ static void draw_pet(gfx_context_t * target, int cx, int base_y, int scale, int 
 	draw_accessory(target, cx, head_y + 37 * scale / 100, scale);
 }
 
-static void draw_bar(gfx_context_t * target, int x, int y, int width,
-	const char * label, int value, uint32_t color) {
-	tt_set_size(font, 12);
-	char value_text[16];
-	snprintf(value_text, sizeof(value_text), "%d", value);
-	tt_draw_string(target, font, x, y + 12, label, C_MUTED);
-	tt_draw_string(target, font, x + width - 22, y + 12, value_text, C_TEXT);
-	draw_rounded_rectangle(target, x, y + 19, width, 7, 3, rgb(31,42,54));
-	draw_rounded_rectangle(target, x, y + 19, width * value / 100, 7, 3, color);
-}
-
 static void post_notice(razion_companion_notice_t notice) {
 	if (notice == RAZION_COMPANION_NOTICE_NONE) return;
 	FILE * toast = fopen("/dev/pex/toast", "w");
@@ -354,13 +341,18 @@ static void overlay_redraw(const char * reaction, int phase) {
 	if (reaction && *reaction) {
 		int bubble_width = tt_string_width(font, reaction) + 24;
 		if (bubble_width > OVERLAY_SIZE - 12) bubble_width = OVERLAY_SIZE - 12;
+		/* A compact native callout with a real pointer, rather than a floating card. */
 		draw_rounded_rectangle(ctx, (OVERLAY_SIZE - bubble_width) / 2, 6,
 			bubble_width, 34, 12, rgba(10,17,25,235));
+		triangle(ctx, OVERLAY_SIZE / 2, 38, 7, 9, rgba(10,17,25,235));
 		tt_set_size(font, 12);
 		tt_draw_string(ctx, font, (OVERLAY_SIZE - bubble_width) / 2 + 12, 28,
 			reaction, rgb(239,246,252));
 	}
 	int scale = config.size == 1 ? 72 : config.size == 2 ? 92 : 112;
+	/* Grounding shadow keeps the shaped surface visually attached to the desktop. */
+	ellipse(ctx, OVERLAY_SIZE / 2, OVERLAY_SIZE - 15,
+		52 * scale / 100, 8 * scale / 100, rgba(0,0,0,72));
 	draw_pet(ctx, OVERLAY_SIZE / 2, OVERLAY_SIZE - 18, scale, phase);
 	flip(ctx);
 	yutani_flip(yctx, window);
@@ -541,6 +533,7 @@ static int run_overlay(void) {
 
 /* ---------------------------- Control center ---------------------------- */
 
+#if 0 /* Superseded by the responsive first-party dashboard below. */
 static int hover_x = -1;
 static int hover_y = -1;
 static int editing_name = 0;
@@ -783,6 +776,9 @@ static void control_click(struct yutani_msg_window_mouse_event * mouse, int ox, 
 	notify_overlay();
 	status("Customization saved.");
 }
+#endif
+
+#include "razion-companion-ui.inc"
 
 static int run_control(void) {
 	load_state();
@@ -792,23 +788,45 @@ static int run_control(void) {
 	init_decorations();
 	struct decor_bounds bounds;
 	decor_get_bounds(NULL, &bounds);
-	window = yutani_window_create(yctx, CONTROL_WIDTH + bounds.width, CONTROL_HEIGHT + bounds.height);
-	window->decorator_flags |= DECOR_FLAG_NO_MAXIMIZE;
+	int initial_width = CONTROL_WIDTH + bounds.width;
+	int initial_height = CONTROL_HEIGHT + bounds.height;
+	if (initial_width > (int)yctx->display_width - 16) initial_width = yctx->display_width - 16;
+	if (initial_height > (int)yctx->display_height - 42) initial_height = yctx->display_height - 42;
+	window = yutani_window_create(yctx, initial_width, initial_height);
 	yutani_window_move(yctx, window,
 		yctx->display_width / 2 - window->width / 2,
-		yctx->display_height / 2 - window->height / 2);
+		28 + (yctx->display_height - 28) / 2 - window->height / 2);
 	yutani_window_advertise_icon(yctx, window, "Desktop Companion", "star");
 	ctx = init_graphics_yutani_double_buffer(window);
 	font = tt_font_from_shm("sans-serif");
 	control_redraw();
 	while (running) {
+		int fd = fileno(yctx->sock);
+		int ready = fswait2(1, &fd,
+			config.animation_speed == 1 ? 850 : config.animation_speed == 2 ? 600 : 420);
+		if (ready != 0) {
+			control_phase = !control_phase;
+			if (reflex_active && milliseconds() > reflex_until) {
+				reflex_active = 0;
+				status("The dot slipped away. Try again.");
+			}
+			control_redraw();
+			continue;
+		}
 		yutani_msg_t * event = yutani_poll(yctx);
 		if (!event) continue;
 		switch (event->type) {
 			case YUTANI_MSG_KEY_EVENT: {
 				struct yutani_msg_key_event * key = (void *)event->data;
 				if (key->event.action != KEY_ACTION_DOWN) break;
-				if (key->event.key == KEY_ESCAPE) { if (editing_name) editing_name = 0; else running = 0; }
+				if (key->event.key == KEY_ESCAPE) {
+					if (editing_name) editing_name = 0;
+					else if (editing_search) {
+						editing_search = 0;
+						search_text[0] = '\0';
+						pet_page = 0;
+					} else running = 0;
+				}
 				else if (editing_name) {
 					size_t length = strlen(config.name);
 					if (key->event.key == '\n') { editing_name = 0; notify_overlay(); status("Name saved."); }
@@ -819,6 +837,18 @@ static int run_control(void) {
 						length < RAZION_COMPANION_NAME_MAX - 1) {
 						config.name[length] = key->event.key;
 						config.name[length + 1] = '\0';
+					}
+				} else if (editing_search) {
+					size_t length = strlen(search_text);
+					if (key->event.key == '\n') editing_search = 0;
+					else if (key->event.key == '\b' || key->event.keycode == KEY_BACKSPACE) {
+						if (length) search_text[length - 1] = '\0';
+						pet_page = 0;
+					} else if (key->event.key >= 0x20 && key->event.key < 0x7F &&
+						length < sizeof(search_text) - 1) {
+						search_text[length] = key->event.key;
+						search_text[length + 1] = '\0';
+						pet_page = 0;
 					}
 				}
 				control_redraw();
@@ -831,9 +861,21 @@ static int run_control(void) {
 				if (decor == DECOR_CLOSE) running = 0;
 				hover_x = mouse->new_x;
 				hover_y = mouse->new_y;
+				if (mouse->command == YUTANI_MOUSE_EVENT_DOWN) mouse_down = 1;
 				if (mouse->command == YUTANI_MOUSE_EVENT_CLICK) {
-					control_click(mouse, bounds.left_width, bounds.top_height);
+					mouse_down = 0;
+					control_click(mouse);
 				}
+				control_redraw();
+				break;
+			}
+			case YUTANI_MSG_RESIZE_OFFER: {
+				struct yutani_msg_window_resize * resize = (void *)event->data;
+				int width = resize->width < 740 ? 740 : resize->width;
+				int height = resize->height < 540 ? 540 : resize->height;
+				yutani_window_resize_accept(yctx, window, width, height);
+				reinit_graphics_yutani(ctx, window);
+				yutani_window_resize_done(yctx, window);
 				control_redraw();
 				break;
 			}
