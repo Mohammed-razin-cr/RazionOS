@@ -156,7 +156,8 @@ int main(int argc, char * argv[]) {
 		RAZION_PULSE_CAP_APP_LAUNCH |
 		RAZION_PULSE_CAP_DIRECTORY_OPEN |
 		RAZION_PULSE_CAP_SYSTEM_READ |
-		RAZION_PULSE_CAP_FILE_CREATE;
+		RAZION_PULSE_CAP_FILE_CREATE |
+		RAZION_PULSE_CAP_FILE_SEARCH;
 	razion_pulse_context_t context;
 	if (razion_pulse_init(&context, "razion-pulse", capabilities)) {
 		fprintf(stderr, "%s: unable to initialize action broker\n", argv[0]);

@@ -134,7 +134,7 @@ razion_pulse_status_t razion_pulse_propose_action(
 			"Create a Python project without overwriting existing files");
 	} else if (!strcmp(normalized, "find-recent-pdf")) {
 		set_proposal(proposal, RAZION_PULSE_ACTION_FIND_RECENT_PDF,
-			RAZION_PULSE_RISK_READ, RAZION_PULSE_CAP_FILE_SEARCH, 0, 0,
+			RAZION_PULSE_RISK_READ, RAZION_PULSE_CAP_FILE_SEARCH, 0, 1,
 			"find-recent-pdf", "user documents",
 			"Find recently modified PDF documents");
 	} else if (!strcmp(normalized, "restart-networking")) {
@@ -280,6 +280,20 @@ static razion_pulse_status_t open_application(
 	return RAZION_PULSE_STATUS_OK;
 }
 
+static razion_pulse_status_t open_recent_pdf_search(
+	char * result,
+	size_t result_size) {
+	char * arguments[] = {"/bin/universal-search", "--recent-pdf", NULL};
+	if (spawn_native(arguments[0], arguments)) {
+		snprintf(result, result_size, "Unable to open local PDF search: %s",
+			strerror(errno));
+		return RAZION_PULSE_STATUS_FAILED;
+	}
+	copy_string(result, result_size,
+		"Opened local PDF search; results are ranked by relevance and modification time.");
+	return RAZION_PULSE_STATUS_OK;
+}
+
 static razion_pulse_status_t open_directory(
 	razion_pulse_action_t action,
 	char * result,
@@ -422,7 +436,7 @@ razion_pulse_status_t razion_pulse_execute(
 	if (!context || !proposal || !result || !result_size ||
 		proposal->version != RAZION_PULSE_PROTOCOL_VERSION ||
 		proposal->action <= RAZION_PULSE_ACTION_UNKNOWN ||
-		proposal->action > RAZION_PULSE_ACTION_SUMMARIZE_TODAY) {
+		proposal->action >= RAZION_PULSE_ACTION_COUNT) {
 		return RAZION_PULSE_STATUS_INVALID;
 	}
 	result[0] = '\0';
@@ -455,6 +469,7 @@ razion_pulse_status_t razion_pulse_execute(
 			case RAZION_PULSE_ACTION_OPEN_CALCULATOR:
 			case RAZION_PULSE_ACTION_OPEN_FILE_BROWSER:
 			case RAZION_PULSE_ACTION_OPEN_SYSTEM_MONITOR:
+			case RAZION_PULSE_ACTION_OPEN_SETTINGS:
 			case RAZION_PULSE_ACTION_OPEN_WALLPAPER_SETTINGS:
 				status = open_application(proposal->action, result, result_size);
 				break;
@@ -467,6 +482,9 @@ razion_pulse_status_t razion_pulse_execute(
 				break;
 			case RAZION_PULSE_ACTION_CREATE_PYTHON_PROJECT:
 				status = create_python_project(result, result_size);
+				break;
+			case RAZION_PULSE_ACTION_FIND_RECENT_PDF:
+				status = open_recent_pdf_search(result, result_size);
 				break;
 			default:
 				status = RAZION_PULSE_STATUS_UNAVAILABLE;

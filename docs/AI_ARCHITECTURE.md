@@ -28,6 +28,8 @@ Implemented components:
   capabilities
 - an isolated Ollama adapter with bounded HTTP/JSON handling, automatic local
   model discovery, real health probes, and explicit unsupported capabilities
+- bounded offline Universal Search, reused by Pulse for the implemented local
+  PDF-search action
 
 ## System position
 
@@ -125,7 +127,8 @@ brokers; it must never pass generated text directly to a shell.
 1. **Complete:** engine, provider abstraction, SDK protocol, policy baseline.
 2. **Complete:** Pulse command interface, canonical native action proposals,
    offline vocabulary, confirmation, and audit policy.
-3. Indexed file search.
+3. **Partial:** bounded in-memory file metadata search and Pulse PDF-search
+   integration are complete; persistent user-controlled indexing is not.
 4. Insight diagnostics.
 5. Memory activity index.
 6. Natural-language settings.

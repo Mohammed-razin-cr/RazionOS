@@ -417,6 +417,14 @@ static void handle_key_event(struct yutani_msg_key_event * ke) {
 		return;
 	}
 
+	/* Super-Space = Open offline Universal Search */
+	if ((ke->event.modifiers & KEY_MOD_LEFT_SUPER) &&
+		(ke->event.keycode == ' ') &&
+		(ke->event.action == KEY_ACTION_DOWN)) {
+		launch_application("exec universal-search");
+		return;
+	}
+
 	/* Ctrl-F11 = Toggle visibility of the panel */
 	if ((ke->event.modifiers & KEY_MOD_LEFT_CTRL) &&
 		(ke->event.keycode == KEY_F11) &&
@@ -792,6 +800,9 @@ static void bind_keys(void) {
 
 	/* Cltr-Alt-T = launch terminal */
 	yutani_key_bind(yctx, 't', KEY_MOD_LEFT_CTRL | KEY_MOD_LEFT_ALT, YUTANI_BIND_STEAL);
+
+	/* Super-Space = Universal Search */
+	yutani_key_bind(yctx, ' ', KEY_MOD_LEFT_SUPER, YUTANI_BIND_STEAL);
 
 	/* Alt+Tab = app switcher*/
 	yutani_key_bind(yctx, '\t', KEY_MOD_LEFT_ALT, YUTANI_BIND_STEAL);

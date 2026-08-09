@@ -9,6 +9,8 @@
 - [Changelog](../CHANGELOG.md) — public milestone summary
 - [Modern desktop milestone](DESKTOP_MILESTONE.md) — File Manager, Recycle Bin,
   wallpaper, Settings, AI responsiveness, limitations, and verification
+- [Universal Search](UNIVERSAL_SEARCH.md) — offline capability and bounded
+  home-directory metadata search
 
 ## Architecture and design records
 
@@ -18,6 +20,8 @@
   Ollama adapter, health-aware routing, and configuration
 - [AI security and privacy](AI_SECURITY.md) — trust boundaries, local-first
   policy, data handling, and fail-closed behavior
+- [Security model](SECURITY_MODEL.md) — enforced protections, trust boundaries,
+  limitations, and invariants for future work
 - [Razion AI SDK](AI_SDK.md) — native application API and result handling
 - [Razion Pulse](PULSE.md) — implemented safe operating-system command
   interface and native action policy

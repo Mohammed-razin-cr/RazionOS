@@ -70,7 +70,7 @@ machine-readable plan and implies `--plan`.
 | `open-downloads` | read | directory open | open fixed user directory |
 | `check-memory` | read | system read | read `/proc/meminfo` directly |
 | `create-python-project` | change | file create | require confirmation; never overwrite |
-| `find-recent-pdf` | read | file search | proposal only until Phase 3 |
+| `find-recent-pdf` | read | file search | open bounded offline Universal Search with a PDF query |
 | `restart-networking` | privileged | network admin | denied; no broker yet |
 | `install-nodejs` | privileged | package management | denied; no broker yet |
 | `summarize-today` | read | activity read | proposal only until Phase 5 |
@@ -125,7 +125,9 @@ header automatically.
 
 ## Remaining roadmap
 
-- Phase 3 supplies the permission-scoped file-search broker.
+- Universal Search now supplies the first bounded, permission-scoped metadata
+  search broker. Persistent indexing and arbitrary natural-language query
+  parameters remain future work.
 - Phase 5 supplies the activity index used by `summarize-today`.
 - Privileged network and package actions require separate authenticated
   brokers before they can become executable.

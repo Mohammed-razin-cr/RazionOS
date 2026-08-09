@@ -16,12 +16,21 @@ All notable RazionOS milestone changes are recorded here.
   desktop context access, and a native Settings application
 - Razion AI response cache, configurable retries, health statistics, async SDK
   begin/poll/cancel operations, Razion Chat, and Settings integration
+- Offline Universal Search across a reviewed application/settings/tool
+  catalogue and bounded visible filename metadata under the user's home
+- Native `libtoaru_razion_search` ranking and collection API, Super+Space and
+  Applications-menu entry points, and Pulse PDF-search integration
+- A repository-wide security model that distinguishes current protections from
+  planned kernel capabilities, Capsules, credential storage, and hardening
 
 ### Verified
 
 - Clean x86_64 build and bootable BIOS/UEFI ISO generation
 - VirtualBox desktop boot, graphical folder creation, Recycle Bin move and
   restore, Settings launch, and graceful AI-provider-unavailable behavior
+- Universal Search unit regression, offline CLI matching, Pulse file-search
+  capability enforcement, native UI launch, and a 23 ms query over the live
+  image's 24 searchable items in VirtualBox
 
 ### Known limitations
 
@@ -30,6 +39,9 @@ All notable RazionOS milestone changes are recorded here.
 - Ollama and models are optional external components and are not bundled
 - Cloud providers stay disabled pending verified TLS and protected key storage
 - Cross-window file drag payloads are not available in the current compositor
+- Universal Search is an in-memory filename metadata scan limited to 2,048
+  visible items and eight directory levels; persistent and semantic indexing
+  are not implemented
 
 ## 0.1 Alpha
 

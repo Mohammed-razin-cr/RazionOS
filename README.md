@@ -18,6 +18,8 @@ system, and a reproducible x86_64 live ISO.
 
 - Razion Desktop with a composited graphical environment
 - Razion Dark theme, custom wallpaper, launcher, panel, and system dialogs
+- Offline Universal Search for applications, implemented settings and tools,
+  and bounded visible filename metadata under the current user's home
 - SMP-capable x86_64 kernel with loadable modules
 - C library, dynamic linker, terminal emulator, shell, and POSIX-style tools
 - Bim editor and Kuroko language environment
