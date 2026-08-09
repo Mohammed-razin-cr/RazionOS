@@ -49,6 +49,14 @@ int main(int argc, char * argv[]) {
 		return 1;
 	}
 
+	/* Optional user-space companion; disabled configurations exit immediately. */
+	int _companion_pid = fork();
+	if (!_companion_pid) {
+		char * args[] = {"/bin/razion-companion", "--overlay", NULL};
+		execvp(args[0], args);
+		return 1;
+	}
+
 	wait(NULL);
 
 	int pid;

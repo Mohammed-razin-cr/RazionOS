@@ -20,6 +20,9 @@ All notable RazionOS milestone changes are recorded here.
   catalogue and bounded visible filename metadata under the user's home
 - Native `libtoaru_razion_search` ranking and collection API, Super+Space and
   Applications-menu entry points, and Pulse PDF-search integration
+- Optional native Razion Companion with 22 data-driven species, original
+  procedural artwork, persistent needs and customization, subtle local
+  notifications, a reflex activity, and a low-idle-cost desktop overlay
 - A repository-wide security model that distinguishes current protections from
   planned kernel capabilities, Capsules, credential storage, and hardening
 
@@ -31,6 +34,9 @@ All notable RazionOS milestone changes are recorded here.
 - Universal Search unit regression, offline CLI matching, Pulse file-search
   capability enforcement, native UI launch, and a 23 ms query over the live
   image's 24 searchable items in VirtualBox
+- Razion Companion engine regression, clean hybrid ISO packaging, native
+  control-center launch, transparent desktop overlay, and disabled-state
+  reboot behavior in VirtualBox
 
 ### Known limitations
 

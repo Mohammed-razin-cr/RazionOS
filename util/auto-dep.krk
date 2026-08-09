@@ -40,6 +40,7 @@ class Classifier:
         '<toaru/razion_ai.h>':   (None, '-ltoaru_razion_ai',   ['<toaru/pex.h>']),
         '<toaru/razion_pulse.h>':(None, '-ltoaru_razion_pulse',['<toaru/razion_ai.h>']),
         '<toaru/razion_search.h>':(None, '-ltoaru_razion_search',[]),
+		'<toaru/razion_companion.h>':(None, '-ltoaru_razion_companion',[]),
         # Kuroko
         '<kuroko/kuroko.h>':     ('../../../kuroko/src', '-lkuroko', []),
     }

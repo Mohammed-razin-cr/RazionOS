@@ -11,6 +11,7 @@ log-out,exit,Log Out
 exec calculator,calculator,Calculator
 exec file-browser,folder,File Browser
 exec universal-search,applications-generic,Universal Search
+exec razion-companion,star,Desktop Companion
 exec terminal pulse,utilities-terminal,Razion Pulse
 exec terminal razion-chat,utilities-terminal,Razion AI Chat
 exec terminal,utilities-terminal,Terminal

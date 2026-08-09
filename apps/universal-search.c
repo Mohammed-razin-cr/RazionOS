@@ -100,6 +100,9 @@ static void load_catalogue(void) {
 		"Implemented appearance, desktop, system, and AI controls", "/bin/settings", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Wallpaper",
 		"Choose wallpaper and placement", "/bin/wallpaper-picker", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SETTING, "Desktop Companion",
+		"Choose, name, customize, and care for an offline desktop companion",
+		"/bin/razion-companion", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Desktop Files",
 		"Open the Desktop folder", "/bin/file-browser", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "System Monitor",
@@ -126,11 +129,11 @@ static void load_catalogue(void) {
 	}
 
 	/* Fill in the only catalogue action whose target depends on HOME. */
-	if (fixed_count > 8) {
+	if (fixed_count > 9) {
 		const char * home = getenv("HOME");
 		static char desktop[RAZION_SEARCH_TARGET_MAX];
 		if (home && snprintf(desktop, sizeof(desktop), "%s/Desktop", home) > 0) {
-			actions[8].argument1 = desktop;
+			actions[9].argument1 = desktop;
 		}
 	}
 }

@@ -16,8 +16,8 @@
 #include <toaru/yutani.h>
 
 #define SETTINGS_WIDTH 620
-#define SETTINGS_HEIGHT 390
-#define BUTTON_COUNT 6
+#define SETTINGS_HEIGHT 460
+#define BUTTON_COUNT 7
 
 static yutani_t * yctx;
 static yutani_window_t * window;
@@ -79,7 +79,8 @@ static void setup_buttons(void) {
 	struct decor_bounds bounds;
 	decor_get_bounds(window, &bounds);
 	char * titles[BUTTON_COUNT] = {
-		"Wallpaper", theme_title, "Desktop", "AI Status", "About", "Terminal"
+		"Wallpaper", theme_title, "Desktop Companion", "Desktop",
+		"AI Status", "About", "Terminal"
 	};
 	for (int i = 0; i < BUTTON_COUNT; ++i) {
 		buttons[i].title = titles[i];
@@ -102,7 +103,7 @@ static void redraw(void) {
 	tt_set_size(font, 13);
 	tt_draw_string(ctx, font, bounds.left_width + 48,
 		bounds.top_height + 82,
-		"Appearance, desktop, system information, and AI configuration", secondary);
+		"Personalization, desktop, system information, and AI configuration", secondary);
 	for (int i = 0; i < BUTTON_COUNT; ++i) ttk_button_draw(ctx, &buttons[i]);
 	tt_draw_string(ctx, font, bounds.left_width + 48,
 		window->height - bounds.bottom_height - 36,
@@ -135,18 +136,21 @@ static void activate(int index) {
 			redraw();
 			break;
 		case 2:
+			launch("razion-companion", NULL, NULL);
+			break;
+		case 3:
 			if (home) {
 				snprintf(desktop, sizeof(desktop), "%s/Desktop", home);
 				launch("file-browser", desktop, NULL);
 			}
 			break;
-		case 3:
+		case 4:
 			launch("terminal", "razion-ai-status", "providers");
 			break;
-		case 4:
+		case 5:
 			launch("about", NULL, NULL);
 			break;
-		case 5:
+		case 6:
 			launch("terminal", NULL, NULL);
 			break;
 	}

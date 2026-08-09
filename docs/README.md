@@ -11,6 +11,8 @@
   wallpaper, Settings, AI responsiveness, limitations, and verification
 - [Universal Search](UNIVERSAL_SEARCH.md) — offline capability and bounded
   home-directory metadata search
+- [Razion Companion](features/RAZION_COMPANION.md) — optional offline desktop
+  companion architecture, customization, persistence, and performance model
 
 ## Architecture and design records
 
