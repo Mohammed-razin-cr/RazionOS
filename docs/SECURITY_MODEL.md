@@ -101,8 +101,10 @@ The following must not be claimed as current protections:
 - encrypted user storage;
 - content or semantic indexing with per-folder consent controls.
 
-The inherited package UI and package tooling are not the planned `rzpkg`
-security architecture. Recovery modes and Capsules remain design work.
+The inherited package tooling is not the planned `rzpkg` transaction service.
+The current `rzpkg` milestone validates bounded metadata and fails closed for
+install, update, and removal; signed repositories, signature enforcement,
+dependency resolution, and privileged transactions remain design work.
 
 ## Security invariants for future work
 

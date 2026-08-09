@@ -2,6 +2,7 @@
 &accessories,folder,Accessories
 &demos,folder,Demos
 &games,folder,Games
+&internet,folder,Internet
 &system,folder,System
 -
 exec help-browser,help,Help Browser
@@ -12,6 +13,7 @@ exec calculator,calculator,Calculator
 exec file-browser,folder,File Browser
 exec universal-search,applications-generic,Universal Search
 exec razion-companion,star,Desktop Companion
+exec razion-store,package,Razion Store
 exec terminal pulse,utilities-terminal,Razion Pulse
 exec terminal razion-chat,utilities-terminal,Razion AI Chat
 exec terminal,utilities-terminal,Terminal
@@ -23,6 +25,8 @@ exec plasma,plasma,Plasma
 exec polygons,polygons,Polygons
 :games
 exec mines.krk,mines,Mines
+:internet
+exec razion-browser,applications-internet,Razion Browser
 :system
 exec settings,applications-generic,Settings
 exec terminal sysinfo,system-monitor,System Information

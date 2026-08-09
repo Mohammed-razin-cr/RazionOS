@@ -96,6 +96,10 @@ static void load_catalogue(void) {
 		"Optional provider-independent AI client", "/bin/terminal", "razion-chat", NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Help Browser",
 		"Local system documentation", "/bin/help-browser", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Store",
+		"Verified local application catalogue and package security status", "/bin/razion-store", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Browser",
+		"Native browser shell with explicit rendering-engine status", "/bin/razion-browser", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Settings",
 		"Implemented appearance, desktop, system, and AI controls", "/bin/settings", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Wallpaper",
@@ -129,11 +133,13 @@ static void load_catalogue(void) {
 	}
 
 	/* Fill in the only catalogue action whose target depends on HOME. */
-	if (fixed_count > 9) {
-		const char * home = getenv("HOME");
-		static char desktop[RAZION_SEARCH_TARGET_MAX];
-		if (home && snprintf(desktop, sizeof(desktop), "%s/Desktop", home) > 0) {
-			actions[9].argument1 = desktop;
+	static char desktop[RAZION_SEARCH_TARGET_MAX];
+	if (home && snprintf(desktop, sizeof(desktop), "%s/Desktop", home) > 0) {
+		for (size_t i = 0; i < fixed_count; ++i) {
+			if (!strcmp(items[i].name, "Desktop Files")) {
+				actions[i].argument1 = desktop;
+				break;
+			}
 		}
 	}
 }
