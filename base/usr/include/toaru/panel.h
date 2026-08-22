@@ -81,6 +81,8 @@ struct window_ad {
 
 extern struct window_ad * ads_by_z[];
 extern list_t * window_list;
+extern uint32_t panel_active_workspace;
+extern uint32_t panel_workspace_count;
 extern void redraw(void);
 extern int panel_menu_show(struct PanelWidget * this, struct MenuList * menu);
 extern int panel_menu_show_at(struct MenuList * menu, int x);

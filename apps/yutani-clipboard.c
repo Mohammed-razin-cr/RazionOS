@@ -24,13 +24,15 @@ int show_usage(int argc, char * argv[]) {
 			"usage: %s -g\n"
 			"       %s -s " X_S "TEXT" X_E "...\n"
 			"       %s -f " X_S "FILE" X_E "\n"
+			"       %s -t\n"
 			"\n"
 			" -s " X_S "TEXT...   set the clipboard text to argument" X_E "\n"
 			" -f " X_S "FILE      set the clibboard text to file" X_E "\n"
 			" -g           " X_S "print clipboard contents to stdout" X_E "\n"
+			" -t           " X_S "print clipboard MIME type" X_E "\n"
 			" -n           " X_S "ensure a linefeed is printed" X_E "\n"
 			" -?           " X_S "show this help text" X_E "\n"
-			"\n", argv[0], argv[0], argv[0], argv[0]);
+			"\n", argv[0], argv[0], argv[0], argv[0], argv[0]);
 	return 1;
 }
 
@@ -86,6 +88,14 @@ void get_clipboard(void) {
 
 }
 
+void get_clipboard_type(void) {
+	yutani_special_request(yctx, NULL, YUTANI_SPECIAL_REQUEST_CLIPBOARD);
+	yutani_msg_t * clipboard = yutani_wait_for(yctx, YUTANI_MSG_CLIPBOARD);
+	struct yutani_msg_clipboard * cb = (void *)clipboard->data;
+	printf("%s\n", cb->mime_type[0] ? cb->mime_type : "application/octet-stream");
+	free(clipboard);
+}
+
 int main(int argc, char * argv[]) {
 	yctx = yutani_init();
 	if (!yctx) {
@@ -93,7 +103,7 @@ int main(int argc, char * argv[]) {
 		return 1;
 	}
 	int opt;
-	while ((opt = getopt(argc, argv, "?s:f:gn")) != -1) {
+	while ((opt = getopt(argc, argv, "?s:f:gnt")) != -1) {
 		switch (opt) {
 			case 's':
 				yutani_set_clipboard(yctx, optarg);
@@ -105,6 +115,9 @@ int main(int argc, char * argv[]) {
 				break;
 			case 'g':
 				get_clipboard();
+				return 0;
+			case 't':
+				get_clipboard_type();
 				return 0;
 			case '?':
 				return show_usage(argc,argv);

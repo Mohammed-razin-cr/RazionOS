@@ -89,6 +89,8 @@ int width;
 int height;
 
 list_t * widgets_enabled = NULL;
+uint32_t panel_active_workspace = 0;
+uint32_t panel_workspace_count = 4;
 
 /* Windows, indexed by z-order */
 struct window_ad * ads_by_z[MAX_WINDOW_COUNT+1] = {NULL};
@@ -958,6 +960,7 @@ int panel_menu_show(struct PanelWidget * this, struct MenuList * menu) {
 static const char ** load_config(void) {
 	static const char * default_widgets[] = {
 		"appmenu",
+		"workspaces",
 		"windowlist",
 		"volume",
 		"network",
@@ -1099,6 +1102,7 @@ int main (int argc, char ** argv) {
 
 	/* Subscribe to window updates */
 	yutani_subscribe_windows(yctx);
+	yutani_workspace_query(yctx);
 
 	/* Ask compositor for window list */
 	update_window_list();
@@ -1150,6 +1154,14 @@ int main (int argc, char ** argv) {
 						break;
 					case YUTANI_MSG_KEY_EVENT:
 						handle_key_event((struct yutani_msg_key_event *)m->data);
+						break;
+					case YUTANI_MSG_WORKSPACE_STATUS:
+						{
+							struct yutani_msg_workspace * state = (void *)m->data;
+							panel_active_workspace = state->workspace;
+							panel_workspace_count = state->count;
+							redraw();
+						}
 						break;
 					case YUTANI_MSG_WELCOME:
 						{

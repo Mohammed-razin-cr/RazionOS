@@ -12,6 +12,8 @@
  * Copyright (C) 2021 K. Lange
  */
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 #include <sched.h>
 #include <time.h>
@@ -35,6 +37,8 @@ struct ToastNotification {
 	yutani_window_t * window;
 	struct timespec created;
 	int duration;
+	char action[64];
+	char argument[512];
 };
 
 #define PAD_RIGHT 10
@@ -55,6 +59,25 @@ static int do_not_disturb(void) {
 	while (fgets(line, sizeof(line), file)) if (!strncmp(line, "dnd=1", 5)) enabled = 1;
 	fclose(file);
 	return enabled;
+}
+
+static int valid_action(const char * action, const char * argument) {
+	if (!action || strcmp(action, "/bin/file-browser")) return 0;
+	if (!argument || strncmp(argument, "/home/local/", 12)) return 0;
+	return !strstr(argument, "..");
+}
+
+static void run_action(struct ToastNotification * notification) {
+	if (!notification->action[0]) return;
+	if (!fork()) {
+		char * arguments[] = {
+			notification->action,
+			notification->argument,
+			NULL,
+		};
+		execv(arguments[0], arguments);
+		_exit(127);
+	}
 }
 
 static void handle_msg(JSON_Value * msg) {
@@ -87,6 +110,7 @@ static void handle_msg(JSON_Value * msg) {
 	yutani_window_move(yctx, win, yctx->display_width - TOAST_WIDTH - PAD_RIGHT, PAD_TOP + TOAST_HEIGHT * windows->length);
 
 	struct ToastNotification * notification = malloc(sizeof(struct ToastNotification));
+	memset(notification, 0, sizeof(*notification));
 	notification->window = win;
 	clock_gettime(CLOCK_MONOTONIC, &notification->created);
 	list_insert(windows, notification);
@@ -96,6 +120,17 @@ static void handle_msg(JSON_Value * msg) {
 		notification->duration = msg_duration->number;
 	} else {
 		notification->duration = 5;
+	}
+
+	JSON_Value * msg_action = JSON_KEY(msg, "action");
+	JSON_Value * msg_argument = JSON_KEY(msg, "argument");
+	if (msg_action && msg_action->type == JSON_TYPE_STRING &&
+		msg_argument && msg_argument->type == JSON_TYPE_STRING &&
+		valid_action(msg_action->string, msg_argument->string)) {
+		strncpy(notification->action, msg_action->string,
+			sizeof(notification->action) - 1);
+		strncpy(notification->argument, msg_argument->string,
+			sizeof(notification->argument) - 1);
 	}
 
 	/* Establish the rendering context for this window, we'll only need it for a bit.
@@ -174,6 +209,23 @@ int main(int argc, char * argv[]) {
 						case YUTANI_MSG_SESSION_END:
 							should_exit = 1;
 							break;
+						case YUTANI_MSG_WINDOW_MOUSE_EVENT: {
+							struct yutani_msg_window_mouse_event * mouse = (void *)m->data;
+							if (mouse->command != YUTANI_MOUSE_EVENT_DOWN &&
+								mouse->command != YUTANI_MOUSE_EVENT_RAISE &&
+								mouse->command != YUTANI_MOUSE_EVENT_CLICK) break;
+							foreach(node, windows) {
+								struct ToastNotification * notification = node->value;
+								if (notification->window && notification->window->wid == mouse->wid) {
+									run_action(notification);
+									yutani_close(yctx, notification->window);
+									notification->window = NULL;
+									notification->duration = 0;
+									break;
+								}
+							}
+							break;
+						}
 						default:
 							break;
 					}

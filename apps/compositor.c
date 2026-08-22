@@ -44,6 +44,7 @@
 #include <toaru/hashmap.h>
 #include <toaru/list.h>
 #include <toaru/text.h>
+#include <toaru/razion_recorder.h>
 
 #define _DEBUG_YUTANI
 #ifdef _DEBUG_YUTANI
@@ -62,6 +63,26 @@ static void window_move(yutani_globals_t * yg, yutani_server_window_t * window, 
 static yutani_server_window_t * top_at(yutani_globals_t * yg, uint16_t x, uint16_t y);
 static void window_unminimize(yutani_globals_t * yg, yutani_server_window_t * window);
 static void window_finish_minimize(yutani_globals_t * yg, yutani_server_window_t * w);
+static void mark_screen(yutani_globals_t * yg, int32_t x, int32_t y, int32_t width, int32_t height);
+
+#define RAZION_WORKSPACE_COUNT 4
+#define RAZION_WORKSPACE_STICKY UINT32_MAX
+
+static int window_on_active_workspace(yutani_globals_t * yg, yutani_server_window_t * w) {
+	return w && (w->workspace == RAZION_WORKSPACE_STICKY || w->workspace == yg->active_workspace);
+}
+
+static yutani_server_window_t * top_focusable_window(yutani_globals_t * yg) {
+	foreachr (node, yg->menu_zs) {
+		yutani_server_window_t * w = node->value;
+		if (window_on_active_workspace(yg, w) && !w->hidden && !w->minimized) return w;
+	}
+	foreachr (node, yg->mid_zs) {
+		yutani_server_window_t * w = node->value;
+		if (window_on_active_workspace(yg, w) && !w->hidden && !w->minimized) return w;
+	}
+	return yg->bottom_z;
+}
 
 #define ENABLE_BLUR_BEHIND
 #ifdef ENABLE_BLUR_BEHIND
@@ -307,6 +328,11 @@ static void reorder_window(yutani_globals_t * yg, yutani_server_window_t * windo
 	unorder_window(yg, window);
 
 	window->z = new_zed;
+	if (new_zed == YUTANI_ZORDER_TOP || new_zed == YUTANI_ZORDER_BOTTOM) {
+		window->workspace = RAZION_WORKSPACE_STICKY;
+	} else if (window->workspace == RAZION_WORKSPACE_STICKY) {
+		window->workspace = yg->active_workspace;
+	}
 
 	list_t * zorder_owner = window_zorder_owner(yg, new_zed);
 	if (zorder_owner) {
@@ -354,6 +380,7 @@ static void make_top(yutani_globals_t * yg, yutani_server_window_t * w) {
  * for multiple "seats" on a single display.
  */
 static void set_focused_window(yutani_globals_t * yg, yutani_server_window_t * w) {
+	if (w && !window_on_active_workspace(yg, w)) return;
 	if (w == yg->focused_window) {
 		return; /* Already focused */
 	}
@@ -391,7 +418,8 @@ static void set_focused_window(yutani_globals_t * yg, yutani_server_window_t * w
  * In case there is no focused window, we return the bottom window.
  */
 static yutani_server_window_t * get_focused(yutani_globals_t * yg) {
-	if (yg->focused_window) return yg->focused_window;
+	if (window_on_active_workspace(yg, yg->focused_window)) return yg->focused_window;
+	yg->focused_window = NULL;
 	if (yg->bottom_z) set_focused_window(yg, yg->bottom_z);
 	return yg->bottom_z;
 }
@@ -419,6 +447,7 @@ static yutani_server_window_t * server_window_create(yutani_globals_t * yg, int 
 
 	win->wid = next_wid();
 	win->owner = owner;
+	win->workspace = (flags & YUTANI_WINDOW_FLAG_STICKY) ? RAZION_WORKSPACE_STICKY : yg->active_workspace;
 	list_insert(yg->windows, win);
 	hashmap_set(yg->wids_to_windows, (void*)(uintptr_t)win->wid, win);
 
@@ -582,6 +611,132 @@ static void mark_screen(yutani_globals_t * yg, int32_t x, int32_t y, int32_t wid
 	list_insert(yg->update_list, rect);
 }
 
+static void send_workspace_status(yutani_globals_t * yg, uintptr_t destination) {
+	yutani_msg_buildx_workspace_alloc(response);
+	yutani_msg_buildx_workspace(response, YUTANI_MSG_WORKSPACE_STATUS,
+		yg->active_workspace, yg->workspace_count,
+		yg->focused_window ? yg->focused_window->wid : 0);
+	if (destination) {
+		pex_send(yg->server, destination, response->size, (char *)response);
+	} else {
+		pex_broadcast(yg->server, response->size, (char *)response);
+	}
+}
+
+static void workspace_switch(yutani_globals_t * yg, uint32_t workspace) {
+	if (workspace >= yg->workspace_count || workspace == yg->active_workspace) return;
+
+	yutani_server_window_t * old_focus = yg->focused_window;
+	if (old_focus) {
+		yutani_msg_buildx_window_focus_change_alloc(response);
+		yutani_msg_buildx_window_focus_change(response, old_focus->wid, 0);
+		pex_send(yg->server, old_focus->owner, response->size, (char *)response);
+	}
+	yg->focused_window = NULL;
+	yg->active_workspace = workspace;
+	yg->mouse_window = NULL;
+	yg->old_hover_window = NULL;
+	mark_screen(yg, 0, 0, yg->width, yg->height);
+	set_focused_window(yg, top_focusable_window(yg));
+	notify_subscribers(yg);
+	send_workspace_status(yg, 0);
+}
+
+static void window_move_workspace(yutani_globals_t * yg, yutani_server_window_t * window, uint32_t workspace) {
+	if (!window || workspace >= yg->workspace_count ||
+		window->workspace == RAZION_WORKSPACE_STICKY || window->workspace == workspace) return;
+	mark_window(yg, window);
+	window->workspace = workspace;
+	if (window == yg->focused_window && workspace != yg->active_workspace) {
+		yg->focused_window = NULL;
+		set_focused_window(yg, top_focusable_window(yg));
+	}
+	mark_screen(yg, 0, 0, yg->width, yg->height);
+	notify_subscribers(yg);
+	send_workspace_status(yg, 0);
+}
+
+static void send_recording_status(yutani_globals_t * yg, uintptr_t destination) {
+	yutani_msg_buildx_recording_alloc(response);
+	yutani_msg_buildx_recording(response, YUTANI_MSG_RECORDING_STATUS, YUTANI_RECORDING_QUERY,
+		yg->recording != NULL,
+		yg->recording ? razion_avi_frame_count(yg->recording) : 0,
+		yg->recording_path);
+	if (destination) pex_send(yg->server, destination, response->size, (char *)response);
+	else pex_broadcast(yg->server, response->size, (char *)response);
+}
+
+static void recording_toast(const char * body, const char * path) {
+	FILE * toast = fopen("/dev/pex/toast", "we");
+	if (!toast) return;
+	if (path && *path) {
+		fprintf(toast, "{\"icon\":\"video\",\"duration\":8,\"body\":\"%s\","
+			"\"action\":\"/bin/file-browser\",\"argument\":\"/home/local/Videos/Recordings\"}", body);
+	} else {
+		fprintf(toast, "{\"icon\":\"video\",\"duration\":5,\"body\":\"%s\"}", body);
+	}
+	fclose(toast);
+}
+
+static void recording_stop(yutani_globals_t * yg, int automatic) {
+	if (!yg->recording) return;
+	uint32_t frames = razion_avi_frame_count(yg->recording);
+	int error = razion_avi_close(yg->recording);
+	yg->recording = NULL;
+	if (!error && frames) {
+		yg->clipboard_size = min(strlen(yg->recording_path), sizeof(yg->clipboard) - 1);
+		memcpy(yg->clipboard, yg->recording_path, yg->clipboard_size);
+		yg->clipboard[yg->clipboard_size] = '\0';
+		strcpy(yg->clipboard_mime, "text/plain;charset=utf-8");
+		recording_toast(automatic ? "Recording reached 30 seconds and was saved." : "Recording saved. Click to open.", yg->recording_path);
+	} else {
+		unlink(yg->recording_path);
+		recording_toast("Recording could not be saved.", NULL);
+	}
+	send_recording_status(yg, 0);
+}
+
+static void recording_start(yutani_globals_t * yg) {
+	if (yg->recording) return;
+	const char * videos = "/home/local/Videos";
+	const char * recordings = "/home/local/Videos/Recordings";
+	struct stat owner;
+	if ((mkdir(videos, 0755) && errno != EEXIST) || (mkdir(recordings, 0755) && errno != EEXIST)) {
+		recording_toast("Recording folder is unavailable.", NULL);
+		return;
+	}
+	if (!stat("/home/local", &owner)) chown(videos, owner.st_uid, owner.st_gid);
+	if (!stat(videos, &owner)) chown(recordings, owner.st_uid, owner.st_gid);
+	struct timeval now;
+	gettimeofday(&now, NULL);
+	struct tm * timeinfo = localtime((time_t *)&now.tv_sec);
+	char timestamp[64];
+	strftime(timestamp, sizeof(timestamp), "Recording-%F-%H-%M-%S.avi", timeinfo);
+	snprintf(yg->recording_path, sizeof(yg->recording_path), "%s/%s", recordings, timestamp);
+	uint32_t width = max(2, yg->width / 2);
+	uint32_t height = max(2, yg->height / 2);
+	yg->recording = razion_avi_open(yg->recording_path, width, height, 5);
+	if (!yg->recording) {
+		recording_toast("Recording could not start.", NULL);
+		return;
+	}
+	yg->recording_last_frame = 0;
+	recording_toast("Screen recording started. Maximum 30 seconds.", NULL);
+	send_recording_status(yg, 0);
+}
+
+static void recording_tick(yutani_globals_t * yg) {
+	if (!yg->recording) return;
+	uint64_t now = yutani_current_time(yg);
+	if (yg->recording_last_frame && now - yg->recording_last_frame < 200) return;
+	yg->recording_last_frame = now;
+	if (razion_avi_add_frame(yg->recording, yg->backend_ctx)) {
+		recording_stop(yg, 0);
+		return;
+	}
+	if (razion_avi_frame_count(yg->recording) >= 150) recording_stop(yg, 1);
+}
+
 /**
  * Draw the cursor sprite.
  */
@@ -655,7 +810,7 @@ static void draw_cursor(yutani_globals_t * yg, int x, int y, int cursor) {
  * around the cursor, but it is relatively slow.
  */
 static yutani_server_window_t * check_top_at(yutani_globals_t * yg, yutani_server_window_t * w, uint16_t x, uint16_t y){
-	if (!w || w->hidden || w->minimized) return NULL;
+	if (!window_on_active_workspace(yg, w) || w->hidden || w->minimized) return NULL;
 	int32_t _x = -1, _y = -1;
 	yutani_device_to_window(w, x, y, &_x, &_y);
 	if (_x < 0 || _x >= w->width || _y < 0 || _y >= w->height) return NULL;
@@ -786,7 +941,7 @@ static void apply_rotation(yutani_globals_t * yg, yutani_server_window_t * windo
  */
 static int yutani_blit_window(yutani_globals_t * yg, yutani_server_window_t * window, int x, int y) {
 
-	if (window->hidden || window->minimized) {
+	if (!window_on_active_workspace(yg, window) || window->hidden || window->minimized) {
 		return 0;
 	}
 
@@ -946,7 +1101,7 @@ static void yutani_post_vbox_rects(yutani_globals_t * yg) {
 
 	struct Rect * rects = (struct Rect *)(tmp+sizeof(int32_t));
 
-#define DO_WINDOW(win) if (win && !win->hidden && !win->minimized && *count < 255 ) { \
+#define DO_WINDOW(win) if (window_on_active_workspace(yg, win) && !win->hidden && !win->minimized && *count < 255 ) { \
 	rects->x = (win)->x; \
 	rects->y = (win)->y; \
 	rects->xe = (win)->x + (win)->width; \
@@ -1029,6 +1184,7 @@ static void yutani_screenshot(yutani_globals_t * yg) {
 	unsigned long flags = GFX_WRITE_FORMAT_PNG;
 
 	gfx_context_t _window;
+	gfx_context_t _region;
 
 	switch (task) {
 		case YUTANI_SCREENSHOT_FULL:
@@ -1049,6 +1205,30 @@ static void yutani_screenshot(yutani_globals_t * yg) {
 			ctx = &_window;
 			flags |= GFX_WRITE_FLAG_ALPHA;
 			break;
+		case YUTANI_SCREENSHOT_REGION: {
+			uint32_t x = yg->screenshot_x;
+			uint32_t y = yg->screenshot_y;
+			uint32_t width = yg->screenshot_width;
+			uint32_t height = yg->screenshot_height;
+			if (x >= yg->backend_ctx->width || y >= yg->backend_ctx->height ||
+				!width || !height) {
+				TRACE("Refusing invalid screenshot region.");
+				return;
+			}
+			if (width > yg->backend_ctx->width - x) width = yg->backend_ctx->width - x;
+			if (height > yg->backend_ctx->height - y) height = yg->backend_ctx->height - y;
+			_region.width = width;
+			_region.height = height;
+			_region.depth = 32;
+			_region.stride = yg->backend_ctx->stride;
+			_region.size = _region.stride * _region.height;
+			_region.buffer = yg->backend_ctx->buffer + y * yg->backend_ctx->stride + x * 4;
+			_region.backbuffer = yg->backend_ctx->backbuffer + y * yg->backend_ctx->stride + x * 4;
+			_region.clips = NULL;
+			ctx = &_region;
+			flags |= GFX_WRITE_FLAG_BACKBUF;
+			break;
+		}
 		default:
 			/* Invalid state */
 			return;
@@ -1091,10 +1271,46 @@ static void yutani_screenshot(yutani_globals_t * yg) {
 	}
 	if (!stat(screenshot_directory, &owner)) chown(fname, owner.st_uid, owner.st_gid);
 
+	/* Publish the actual PNG through the binary-safe clipboard backing store. */
+	struct stat screenshot_stat;
+	char clipboard_path[256];
+	snprintf(clipboard_path, sizeof(clipboard_path), "/tmp/.clipboard.%s", yg->server_ident);
+	FILE * source = fopen(fname, "rb");
+	FILE * destination = source ? fopen(clipboard_path, "wb") : NULL;
+	int clipboard_ok = source && destination && !stat(fname, &screenshot_stat);
+	if (clipboard_ok) {
+		char copy_buffer[16384];
+		size_t copied;
+		while ((copied = fread(copy_buffer, 1, sizeof(copy_buffer), source))) {
+			if (fwrite(copy_buffer, 1, copied, destination) != copied) {
+				clipboard_ok = 0;
+				break;
+			}
+		}
+		if (ferror(source) || fflush(destination)) clipboard_ok = 0;
+	}
+	if (source) fclose(source);
+	if (destination && fclose(destination)) clipboard_ok = 0;
+
+	if (clipboard_ok) {
+		yg->clipboard_size = snprintf(yg->clipboard, sizeof(yg->clipboard), "\002 %zu", (size_t)screenshot_stat.st_size);
+		strcpy(yg->clipboard_mime, "image/png");
+	} else {
+		unlink(clipboard_path);
+		yg->clipboard_size = min(strlen(fname), sizeof(yg->clipboard) - 1);
+		memcpy(yg->clipboard, fname, yg->clipboard_size);
+		yg->clipboard[yg->clipboard_size] = '\0';
+		strcpy(yg->clipboard_mime, "text/plain;charset=utf-8");
+	}
 
 	FILE * toast = fopen("/dev/pex/toast", "we");
 	if (toast) {
-		fprintf(toast, "{\"icon\": \"%s\", \"body\": \"Saved %s\"}", fname, fname);
+		fprintf(toast,
+			"{\"icon\":\"%s\",\"duration\":30,"
+			"\"body\":\"Saved. Click to open.\","
+			"\"action\":\"/bin/file-browser\","
+			"\"argument\":\"%s\"}",
+			fname, screenshot_directory);
 		fclose(toast);
 	}
 
@@ -1503,6 +1719,7 @@ static void redraw_windows(yutani_globals_t * yg) {
 
 	}
 
+	recording_tick(yg);
 	if (yg->screenshot_frame) {
 		yutani_screenshot(yg);
 	}
@@ -1522,7 +1739,7 @@ void yutani_clip_init(yutani_globals_t * yg) {
  * the whole region specified and then mark that.
  */
 static void mark_window_relative(yutani_globals_t * yg, yutani_server_window_t * window, int32_t x, int32_t y, int32_t width, int32_t height) {
-	if (window->hidden || window->minimized) return;
+	if (!window_on_active_workspace(yg, window) || window->hidden || window->minimized) return;
 	yutani_damage_rect_t * rect = malloc(sizeof(yutani_damage_rect_t));
 	yutani_server_window_t fake_window;
 
@@ -1626,13 +1843,7 @@ static void window_finish_minimize(yutani_globals_t * yg, yutani_server_window_t
 	unorder_window(yg,w);
 	if (w == yg->focused_window) {
 		yg->focused_window = NULL;
-		if (yg->menu_zs->tail && yg->menu_zs->tail->value) {
-			set_focused_window(yg, yg->menu_zs->tail->value);
-		} else if (yg->mid_zs->tail && yg->mid_zs->tail->value) {
-			set_focused_window(yg, yg->mid_zs->tail->value);
-		} else {
-			set_focused_window(yg, yg->bottom_z);
-		}
+		set_focused_window(yg, top_focusable_window(yg));
 	}
 
 	list_insert(yg->minimized_zs, w);
@@ -1668,13 +1879,7 @@ static void window_actually_close(yutani_globals_t * yg, yutani_server_window_t 
 	if (w == yg->focused_window) {
 		/* find the top z-ordered window */
 		yg->focused_window = NULL;
-		if (yg->menu_zs->tail && yg->menu_zs->tail->value) {
-			set_focused_window(yg, yg->menu_zs->tail->value);
-		} else if (yg->mid_zs->tail && yg->mid_zs->tail->value) {
-			set_focused_window(yg, yg->mid_zs->tail->value);
-		} else {
-			set_focused_window(yg, yg->bottom_z);
-		}
+		set_focused_window(yg, top_focusable_window(yg));
 	}
 
 	{
@@ -1713,7 +1918,7 @@ static uint32_t ad_flags(yutani_globals_t * yg, yutani_server_window_t * win) {
  * Send a result for a window query.
  */
 static void yutani_query_result(yutani_globals_t * yg, uintptr_t dest, yutani_server_window_t * win) {
-	if (win && win->client_length) {
+	if (window_on_active_workspace(yg, win) && win->client_length) {
 		yutani_msg_buildx_window_advertise_alloc(response, win->client_length);
 		yutani_msg_buildx_window_advertise(response, win->wid, ad_flags(yg, win), win->client_icon, win->bufid, win->width, win->height, win->client_length, win->client_strings);
 		pex_send(yg->server, dest, response->size, (char *)response);
@@ -1877,6 +2082,19 @@ static void window_minimize(yutani_globals_t * yg, yutani_server_window_t * wind
 static void handle_key_event(yutani_globals_t * yg, struct yutani_msg_key_event * ke) {
 	yg->active_modifiers = ke->event.modifiers;
 	yutani_server_window_t * focused = get_focused(yg);
+	if (ke->event.action == KEY_ACTION_DOWN &&
+		(ke->event.modifiers & (KEY_MOD_LEFT_CTRL | KEY_MOD_RIGHT_CTRL)) &&
+		(ke->event.modifiers & (KEY_MOD_LEFT_ALT | KEY_MOD_RIGHT_ALT)) &&
+		(ke->event.keycode == KEY_ARROW_LEFT || ke->event.keycode == KEY_ARROW_RIGHT)) {
+		int direction = ke->event.keycode == KEY_ARROW_LEFT ? -1 : 1;
+		uint32_t target = (yg->active_workspace + yg->workspace_count + direction) % yg->workspace_count;
+		if ((ke->event.modifiers & (KEY_MOD_LEFT_SHIFT | KEY_MOD_RIGHT_SHIFT)) && focused &&
+			focused->workspace != RAZION_WORKSPACE_STICKY) {
+			window_move_workspace(yg, focused, target);
+		}
+		workspace_switch(yg, target);
+		return;
+	}
 	if (focused) {
 #if 1
 		if ((ke->event.action == KEY_ACTION_DOWN) &&
@@ -2671,6 +2889,9 @@ int main(int argc, char * argv[]) {
 	yg->minimized_zs = list_create();
 
 	yg->window_subscribers = list_create();
+	yg->active_workspace = 0;
+	yg->workspace_count = RAZION_WORKSPACE_COUNT;
+	strcpy(yg->clipboard_mime, "text/plain;charset=utf-8");
 
 	yg->last_mouse_buttons = 0;
 	yg->resize_release_time = 0;
@@ -3207,6 +3428,23 @@ int main(int argc, char * argv[]) {
 					window_tile(yg, w, wt->columns, wt->rows, wt->column, wt->row);
 					break;
 				}
+			case YUTANI_MSG_SCREENSHOT:
+				{
+					struct yutani_msg_screenshot * request = (void *)m->data;
+					if (request->width < 2 || request->height < 2 ||
+						request->x < 0 || request->y < 0 ||
+						(uint32_t)request->x >= yg->width ||
+						(uint32_t)request->y >= yg->height) {
+						TRACE("Rejected invalid screenshot rectangle.");
+						break;
+					}
+					yg->screenshot_x = request->x;
+					yg->screenshot_y = request->y;
+					yg->screenshot_width = min(request->width, yg->width - request->x);
+					yg->screenshot_height = min(request->height, yg->height - request->y);
+					yg->screenshot_frame = YUTANI_SCREENSHOT_REGION;
+					break;
+				}
 			case YUTANI_MSG_SPECIAL_REQUEST:
 				{
 					struct yutani_msg_special_request * sr = (void *)m->data;
@@ -3237,7 +3475,8 @@ int main(int argc, char * argv[]) {
 						case YUTANI_SPECIAL_REQUEST_CLIPBOARD:
 							{
 								yutani_msg_buildx_clipboard_alloc(response, yg->clipboard_size);
-								yutani_msg_buildx_clipboard(response, yg->clipboard);
+								yutani_msg_buildx_clipboard_data(response, yg->clipboard_mime,
+									yg->clipboard, yg->clipboard_size);
 								pex_send(server, p->source, response->size, (char *)response);
 							}
 							break;
@@ -3248,13 +3487,47 @@ int main(int argc, char * argv[]) {
 
 				}
 				break;
+			case YUTANI_MSG_WORKSPACE_SWITCH:
+				{
+					struct yutani_msg_workspace * request = (void *)m->data;
+					workspace_switch(yg, request->workspace);
+				}
+				break;
+			case YUTANI_MSG_WORKSPACE_QUERY:
+				send_workspace_status(yg, p->source);
+				break;
+			case YUTANI_MSG_WINDOW_WORKSPACE:
+				{
+					struct yutani_msg_workspace * request = (void *)m->data;
+					yutani_server_window_t * w = hashmap_get(yg->wids_to_windows, (void *)(uintptr_t)request->wid);
+					if (w && w->owner == p->source) {
+						window_move_workspace(yg, w, request->workspace);
+					}
+				}
+				break;
+			case YUTANI_MSG_RECORDING:
+				{
+					struct yutani_msg_recording * request = (void *)m->data;
+					switch (request->action) {
+						case YUTANI_RECORDING_START: recording_start(yg); break;
+						case YUTANI_RECORDING_STOP: recording_stop(yg, 0); break;
+						case YUTANI_RECORDING_QUERY: send_recording_status(yg, p->source); break;
+						default: break;
+					}
+				}
+				break;
 			case YUTANI_MSG_CLIPBOARD:
 				{
 					struct yutani_msg_clipboard * cb = (void *)m->data;
+					size_t header_size = sizeof(struct yutani_message) + sizeof(struct yutani_msg_clipboard);
+					if (m->size < header_size || cb->size > m->size - header_size) break;
 					yg->clipboard_size = min(cb->size, 511);
 					memcpy(yg->clipboard, cb->content, yg->clipboard_size);
 					yg->clipboard[yg->clipboard_size] = '\0';
-					TRACE("Copied text to clipbard (size=%d)", yg->clipboard_size);
+					memcpy(yg->clipboard_mime, cb->mime_type, sizeof(yg->clipboard_mime));
+					yg->clipboard_mime[sizeof(yg->clipboard_mime) - 1] = '\0';
+					if (!yg->clipboard_mime[0]) strcpy(yg->clipboard_mime, "application/octet-stream");
+					TRACE("Copied clipboard data (type=%s, size=%d)", yg->clipboard_mime, yg->clipboard_size);
 				}
 				break;
 			case YUTANI_MSG_WINDOW_PANEL_SIZE:

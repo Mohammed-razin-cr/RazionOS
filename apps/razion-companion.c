@@ -430,7 +430,7 @@ static int run_overlay(void) {
 	if (!yctx) { fclose(control); return 1; }
 	window = yutani_window_create_flags(yctx, OVERLAY_SIZE, OVERLAY_SIZE,
 		YUTANI_WINDOW_FLAG_NO_STEAL_FOCUS | YUTANI_WINDOW_FLAG_DISALLOW_RESIZE |
-		YUTANI_WINDOW_FLAG_NO_ANIMATION);
+		YUTANI_WINDOW_FLAG_NO_ANIMATION | YUTANI_WINDOW_FLAG_STICKY);
 	ctx = init_graphics_yutani_double_buffer(window);
 	font = tt_font_from_shm("sans-serif");
 	yutani_window_advertise_icon(yctx, window, "Razion Companion", "star");

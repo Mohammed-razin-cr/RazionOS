@@ -33,6 +33,7 @@ _Begin_C_Header
 /* Screenshot modes */
 #define YUTANI_SCREENSHOT_FULL 1
 #define YUTANI_SCREENSHOT_WINDOW 2
+#define YUTANI_SCREENSHOT_REGION 3
 
 /*
  * Animation effect types.
@@ -131,6 +132,9 @@ typedef struct YutaniServerWindow {
 
 	/* Connection that owns this window */
 	uintptr_t owner;
+
+	/* Virtual workspace assignment. UINT32_MAX means sticky. */
+	uint32_t workspace;
 
 	/* Rotation of windows XXX */
 	int16_t  rotation;
@@ -244,6 +248,10 @@ typedef struct YutaniGlobals {
 	/* Pointer to focused window */
 	yutani_server_window_t * focused_window;
 
+	/* Compositor-owned virtual workspaces. */
+	uint32_t active_workspace;
+	uint32_t workspace_count;
+
 	/* Mouse movement state */
 	int mouse_state;
 
@@ -304,6 +312,10 @@ typedef struct YutaniGlobals {
 
 	/* If the next rendered frame should be saved as a screenshot */
 	int screenshot_frame;
+	int32_t screenshot_x;
+	int32_t screenshot_y;
+	uint32_t screenshot_width;
+	uint32_t screenshot_height;
 
 	/* Next frame should resize host context */
 	int resize_on_next;
@@ -314,6 +326,12 @@ typedef struct YutaniGlobals {
 	/* Clipboard buffer */
 	char clipboard[512];
 	int clipboard_size;
+	char clipboard_mime[64];
+
+	/* Bounded compositor-owned screen recording. */
+	void * recording;
+	uint64_t recording_last_frame;
+	char recording_path[256];
 
 	/* VirtualBox Seamless mode support information */
 	int vbox_rects;

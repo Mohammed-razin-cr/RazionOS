@@ -516,14 +516,19 @@ void yutani_msg_buildx_special_request(yutani_msg_t * msg, yutani_wid_t wid, uin
 }
 
 void yutani_msg_buildx_clipboard(yutani_msg_t * msg, char * content) {
+	yutani_msg_buildx_clipboard_data(msg, "text/plain;charset=utf-8", content, strlen(content));
+}
+
+void yutani_msg_buildx_clipboard_data(yutani_msg_t * msg, const char * mime_type, const void * content, size_t size) {
 	msg->magic = YUTANI_MSG__MAGIC;
 	msg->type  = YUTANI_MSG_CLIPBOARD;
-	msg->size  = sizeof(struct yutani_message) + sizeof(struct yutani_msg_clipboard) + strlen(content);
+	msg->size  = sizeof(struct yutani_message) + sizeof(struct yutani_msg_clipboard) + size;
 
 	struct yutani_msg_clipboard * cl = (void *)msg->data;
-
-	cl->size = strlen(content);
-	memcpy(cl->content, content, strlen(content));
+	cl->size = size;
+	memset(cl->mime_type, 0, sizeof(cl->mime_type));
+	if (mime_type) strncpy(cl->mime_type, mime_type, sizeof(cl->mime_type) - 1);
+	if (size) memcpy(cl->content, content, size);
 }
 
 void yutani_msg_buildx_window_panel_size(yutani_msg_t * msg, yutani_wid_t wid, int32_t x, int32_t y, int32_t w, int32_t h) {
@@ -550,6 +555,70 @@ void yutani_msg_buildx_window_tile(yutani_msg_t * msg, yutani_wid_t wid, uint32_
 	wt->rows = rows;
 	wt->column = column;
 	wt->row = row;
+}
+
+void yutani_msg_buildx_screenshot(yutani_msg_t * msg, int32_t x, int32_t y, uint32_t width, uint32_t height) {
+	msg->magic = YUTANI_MSG__MAGIC;
+	msg->type = YUTANI_MSG_SCREENSHOT;
+	msg->size = sizeof(struct yutani_message) + sizeof(struct yutani_msg_screenshot);
+
+	struct yutani_msg_screenshot * request = (void *)msg->data;
+	request->x = x;
+	request->y = y;
+	request->width = width;
+	request->height = height;
+}
+
+void yutani_screenshot_region(yutani_t * yctx, int32_t x, int32_t y, uint32_t width, uint32_t height) {
+	yutani_msg_buildx_screenshot_alloc(message);
+	yutani_msg_buildx_screenshot(message, x, y, width, height);
+	yutani_msg_send(yctx, message);
+}
+
+void yutani_msg_buildx_workspace(yutani_msg_t * msg, uint32_t type, uint32_t workspace, uint32_t count, yutani_wid_t wid) {
+	msg->magic = YUTANI_MSG__MAGIC;
+	msg->type = type;
+	msg->size = sizeof(struct yutani_message) + sizeof(struct yutani_msg_workspace);
+	struct yutani_msg_workspace * request = (void *)msg->data;
+	request->workspace = workspace;
+	request->count = count;
+	request->wid = wid;
+}
+
+void yutani_workspace_switch(yutani_t * yctx, uint32_t workspace) {
+	yutani_msg_buildx_workspace_alloc(message);
+	yutani_msg_buildx_workspace(message, YUTANI_MSG_WORKSPACE_SWITCH, workspace, 0, 0);
+	yutani_msg_send(yctx, message);
+}
+
+void yutani_workspace_query(yutani_t * yctx) {
+	yutani_msg_buildx_workspace_alloc(message);
+	yutani_msg_buildx_workspace(message, YUTANI_MSG_WORKSPACE_QUERY, 0, 0, 0);
+	yutani_msg_send(yctx, message);
+}
+
+void yutani_window_move_to_workspace(yutani_t * yctx, yutani_wid_t wid, uint32_t workspace) {
+	yutani_msg_buildx_workspace_alloc(message);
+	yutani_msg_buildx_workspace(message, YUTANI_MSG_WINDOW_WORKSPACE, workspace, 0, wid);
+	yutani_msg_send(yctx, message);
+}
+
+void yutani_msg_buildx_recording(yutani_msg_t * msg, uint32_t type, uint32_t action, uint32_t active, uint32_t frames, const char * path) {
+	msg->magic = YUTANI_MSG__MAGIC;
+	msg->type = type;
+	msg->size = sizeof(struct yutani_message) + sizeof(struct yutani_msg_recording);
+	struct yutani_msg_recording * recording = (void *)msg->data;
+	recording->action = action;
+	recording->active = active;
+	recording->frames = frames;
+	memset(recording->path, 0, sizeof(recording->path));
+	if (path) strncpy(recording->path, path, sizeof(recording->path) - 1);
+}
+
+void yutani_recording_request(yutani_t * yctx, uint32_t action) {
+	yutani_msg_buildx_recording_alloc(message);
+	yutani_msg_buildx_recording(message, YUTANI_MSG_RECORDING, action, 0, 0, NULL);
+	yutani_msg_send(yctx, message);
 }
 
 int yutani_msg_send(yutani_t * y, yutani_msg_t * msg) {
@@ -1115,23 +1184,26 @@ void yutani_special_request_wid(yutani_t * yctx, yutani_wid_t wid, uint32_t requ
  * request and wait for the CLIPBOARD response message.
  */
 void yutani_set_clipboard(yutani_t * yctx, char * content) {
-	/* Set clipboard contents */
-	int len = strlen(content);
-	if (len > 511) {
+	yutani_set_clipboard_data(yctx, "text/plain;charset=utf-8", content, strlen(content));
+}
+
+void yutani_set_clipboard_data(yutani_t * yctx, const char * mime_type, const void * content, size_t size) {
+	if (size > 511) {
 		char tmp_file[100];
 		sprintf(tmp_file, "/tmp/.clipboard.%s", yctx->server_ident);
-		FILE * tmp = fopen(tmp_file, "w+");
-		fwrite(content, len, 1, tmp);
+		FILE * tmp = fopen(tmp_file, "wb");
+		if (!tmp) return;
+		fwrite(content, 1, size, tmp);
 		fclose(tmp);
 
 		char tmp_data[100];
-		sprintf(tmp_data, "\002 %d", len);
+		sprintf(tmp_data, "\002 %zu", size);
 		yutani_msg_buildx_clipboard_alloc(m, strlen(tmp_data));
-		yutani_msg_buildx_clipboard(m, tmp_data);
+		yutani_msg_buildx_clipboard_data(m, mime_type, tmp_data, strlen(tmp_data));
 		yutani_msg_send(yctx, m);
 	} else {
-		yutani_msg_buildx_clipboard_alloc(m, len);
-		yutani_msg_buildx_clipboard(m, content);
+		yutani_msg_buildx_clipboard_alloc(m, size);
+		yutani_msg_buildx_clipboard_data(m, mime_type, content, size);
 		yutani_msg_send(yctx, m);
 	}
 }
@@ -1150,7 +1222,7 @@ void yutani_window_panel_size(yutani_t * yctx, yutani_wid_t wid, int32_t x, int3
 FILE * yutani_open_clipboard(yutani_t * yctx) {
 	char tmp_file[100];
 	sprintf(tmp_file, "/tmp/.clipboard.%s", yctx->server_ident);
-	return fopen(tmp_file, "r");
+	return fopen(tmp_file, "rb");
 }
 
 /**

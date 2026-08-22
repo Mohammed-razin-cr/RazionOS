@@ -157,6 +157,23 @@ static void load_catalogue(void) {
 		"Capture the full display to Pictures/Screenshots", "/bin/yutani-screenshot", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Screenshot Active Window",
 		"Capture the focused window to Pictures/Screenshots", "/bin/yutani-screenshot", "--window", NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Select Screenshot Region",
+		"Drag over a display region and save it to Pictures/Screenshots",
+		"/bin/yutani-screenshot", "--select", NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Start Screen Recording",
+		"Record the display to Videos/Recordings (30 second limit)",
+		"/bin/razion-recorder", "start", NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Stop Screen Recording",
+		"Finish and save the active screen recording",
+		"/bin/razion-recorder", "stop", NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Workspace 1",
+		"Switch to virtual workspace 1", "/bin/razion-workspace", "switch", "1", NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Workspace 2",
+		"Switch to virtual workspace 2", "/bin/razion-workspace", "switch", "2", NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Workspace 3",
+		"Switch to virtual workspace 3", "/bin/razion-workspace", "switch", "3", NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Workspace 4",
+		"Switch to virtual workspace 4", "/bin/razion-workspace", "switch", "4", NULL);
 
 	const char * home = getenv("HOME");
 	static char home_location[RAZION_SEARCH_TARGET_MAX];

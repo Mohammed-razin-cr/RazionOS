@@ -42,6 +42,9 @@ _Begin_C_Header
 #define yutani_msg_buildx_clipboard_alloc(out, length) char _yutani_tmp_ ## LINE [sizeof(struct yutani_message) + sizeof(struct yutani_msg_clipboard)+length]; yutani_msg_t * out = (void *)&_yutani_tmp_ ## LINE;
 #define yutani_msg_buildx_window_panel_size_alloc(out) char _yutani_tmp_ ## LINE [sizeof(struct yutani_message) + sizeof(struct yutani_msg_window_panel_size)]; yutani_msg_t * out = (void *)&_yutani_tmp_ ## LINE;
 #define yutani_msg_buildx_window_tile_alloc(out) char _yutani_tmp_ ## LINE [sizeof(struct yutani_message) + sizeof(struct yutani_msg_window_tile)]; yutani_msg_t * out = (void *)&_yutani_tmp_ ## LINE;
+#define yutani_msg_buildx_screenshot_alloc(out) char _yutani_tmp_ ## LINE [sizeof(struct yutani_message) + sizeof(struct yutani_msg_screenshot)]; yutani_msg_t * out = (void *)&_yutani_tmp_ ## LINE;
+#define yutani_msg_buildx_workspace_alloc(out) char _yutani_tmp_ ## LINE [sizeof(struct yutani_message) + sizeof(struct yutani_msg_workspace)]; yutani_msg_t * out = (void *)&_yutani_tmp_ ## LINE;
+#define yutani_msg_buildx_recording_alloc(out) char _yutani_tmp_ ## LINE [sizeof(struct yutani_message) + sizeof(struct yutani_msg_recording)]; yutani_msg_t * out = (void *)&_yutani_tmp_ ## LINE;
 
 extern void yutani_msg_buildx_hello(yutani_msg_t * msg);
 extern void yutani_msg_buildx_flip(yutani_msg_t * msg, yutani_wid_t wid);
@@ -75,7 +78,11 @@ extern void yutani_msg_buildx_window_show_mouse(yutani_msg_t * msg, yutani_wid_t
 extern void yutani_msg_buildx_window_resize_start(yutani_msg_t * msg, yutani_wid_t wid, yutani_scale_direction_t direction);
 extern void yutani_msg_buildx_special_request(yutani_msg_t * msg, yutani_wid_t wid, uint32_t request);
 extern void yutani_msg_buildx_clipboard(yutani_msg_t * msg, char * content);
+extern void yutani_msg_buildx_clipboard_data(yutani_msg_t * msg, const char * mime_type, const void * content, size_t size);
 extern void yutani_msg_buildx_window_panel_size(yutani_msg_t * msg, yutani_wid_t wid, int32_t x, int32_t y, int32_t w, int32_t h);
 extern void yutani_msg_buildx_window_tile(yutani_msg_t * msg, yutani_wid_t wid, uint32_t columns, uint32_t rows, uint32_t column, uint32_t row);
+extern void yutani_msg_buildx_screenshot(yutani_msg_t * msg, int32_t x, int32_t y, uint32_t width, uint32_t height);
+extern void yutani_msg_buildx_workspace(yutani_msg_t * msg, uint32_t type, uint32_t workspace, uint32_t count, yutani_wid_t wid);
+extern void yutani_msg_buildx_recording(yutani_msg_t * msg, uint32_t type, uint32_t action, uint32_t active, uint32_t frames, const char * path);
 
 _End_C_Header

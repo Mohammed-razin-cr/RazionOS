@@ -256,6 +256,7 @@ struct yutani_msg_special_request {
 
 struct yutani_msg_clipboard {
 	uint32_t size;
+	char mime_type[64];
 	char content[];
 };
 
@@ -279,6 +280,32 @@ struct yutani_msg_window_tile {
 	uint32_t column;
 	uint32_t row;
 };
+
+/** Request a compositor-owned screenshot of an exact display rectangle. */
+struct yutani_msg_screenshot {
+	int32_t x;
+	int32_t y;
+	uint32_t width;
+	uint32_t height;
+};
+
+/** Compositor-owned virtual workspace state and requests. */
+struct yutani_msg_workspace {
+	uint32_t workspace;
+	uint32_t count;
+	yutani_wid_t wid;
+};
+
+struct yutani_msg_recording {
+	uint32_t action;
+	uint32_t active;
+	uint32_t frames;
+	char path[256];
+};
+
+#define YUTANI_RECORDING_START 1
+#define YUTANI_RECORDING_STOP  2
+#define YUTANI_RECORDING_QUERY 3
 
 /* Magic value */
 #define YUTANI_MSG__MAGIC 0xABAD1DEA
@@ -321,6 +348,11 @@ struct yutani_msg_window_tile {
 #define YUTANI_MSG_WINDOW_SHOW_MOUSE   0x00000028
 #define YUTANI_MSG_WINDOW_RESIZE_START 0x00000029
 #define YUTANI_MSG_WINDOW_PANEL_SIZE   0x0000002a
+#define YUTANI_MSG_SCREENSHOT          0x0000002b
+#define YUTANI_MSG_WORKSPACE_SWITCH    0x0000002c
+#define YUTANI_MSG_WINDOW_WORKSPACE    0x0000002d
+#define YUTANI_MSG_WORKSPACE_QUERY     0x0000002e
+#define YUTANI_MSG_RECORDING           0x0000002f
 
 #define YUTANI_MSG_SESSION_END         0x00000030
 
@@ -338,6 +370,8 @@ struct yutani_msg_window_tile {
 /* Server responses */
 #define YUTANI_MSG_WELCOME             0x00010001
 #define YUTANI_MSG_WINDOW_INIT         0x00010002
+#define YUTANI_MSG_WORKSPACE_STATUS    0x00010003
+#define YUTANI_MSG_RECORDING_STATUS    0x00010004
 
 /*
  * YUTANI_ZORDER
@@ -509,6 +543,7 @@ struct yutani_msg_window_tile {
 #define YUTANI_WINDOW_FLAG_NO_ANIMATION     (1 << 5)
 #define YUTANI_WINDOW_FLAG_BLUR_BEHIND      (1 << 8)
 #define YUTANI_WINDOW_FLAG_PARENT_WID       (1 << 9)
+#define YUTANI_WINDOW_FLAG_STICKY           (1 << 10)
 
 /* YUTANI_SPECIAL_REQUEST
  *
@@ -579,9 +614,15 @@ extern void yutani_window_warp_mouse(yutani_t * yctx, yutani_window_t * window, 
 extern void yutani_window_show_mouse(yutani_t * yctx, yutani_window_t * window, int32_t show_mouse);
 extern void yutani_window_resize_start(yutani_t * yctx, yutani_window_t * window, yutani_scale_direction_t direction);
 extern void yutani_window_tile(yutani_t * yctx, yutani_window_t * window, uint32_t columns, uint32_t rows, uint32_t column, uint32_t row);
+extern void yutani_screenshot_region(yutani_t * yctx, int32_t x, int32_t y, uint32_t width, uint32_t height);
+extern void yutani_workspace_switch(yutani_t * yctx, uint32_t workspace);
+extern void yutani_workspace_query(yutani_t * yctx);
+extern void yutani_window_move_to_workspace(yutani_t * yctx, yutani_wid_t wid, uint32_t workspace);
+extern void yutani_recording_request(yutani_t * yctx, uint32_t action);
 extern void yutani_special_request(yutani_t * yctx, yutani_window_t * window, uint32_t request);
 extern void yutani_special_request_wid(yutani_t * yctx, yutani_wid_t wid, uint32_t request);
 extern void yutani_set_clipboard(yutani_t * yctx, char * content);
+extern void yutani_set_clipboard_data(yutani_t * yctx, const char * mime_type, const void * content, size_t size);
 extern FILE * yutani_open_clipboard(yutani_t * yctx);
 
 extern gfx_context_t * init_graphics_yutani(yutani_window_t * window);
@@ -591,4 +632,3 @@ extern void release_graphics_yutani(gfx_context_t * gfx);
 extern void yutani_internal_refocus(yutani_t * yctx, yutani_window_t * window);
 
 _End_C_Header
-
