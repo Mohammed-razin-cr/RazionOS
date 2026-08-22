@@ -51,6 +51,8 @@ static char query[QUERY_CAPACITY];
 static size_t query_length;
 static razion_search_stats_t search_stats;
 static int running = 1;
+static size_t recents[5];
+static size_t recent_count;
 
 static void copy_string(char * destination, size_t size, const char * source) {
 	if (!size) return;
@@ -98,10 +100,22 @@ static void load_catalogue(void) {
 		"Local system documentation", "/bin/help-browser", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Store",
 		"Verified local application catalogue and package security status", "/bin/razion-store", NULL, NULL, NULL);
-	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Browser",
-		"Native browser shell with explicit rendering-engine status", "/bin/razion-browser", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Ripper",
+		"First-party browser shell with explicit rendering-engine status", "/bin/ripper", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Notes",
+		"Local plain-text notes", "/bin/razion-notes", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Calendar",
+		"Native month calendar", "/bin/razion-calendar", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Media Player",
+		"Native low-overhead PCM playback", "/bin/razion-media", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Snake",
+		"Native arcade game with keyboard controls", "/bin/razion-snake", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Tiles",
+		"Native 2048-style number puzzle", "/bin/razion-tiles", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Settings",
 		"Implemented appearance, desktop, system, and AI controls", "/bin/settings", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SETTING, "Quick Settings",
+		"Network, audio, appearance, notifications, and power", "/bin/quick-settings", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Wallpaper",
 		"Choose wallpaper and placement", "/bin/wallpaper-picker", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Desktop Companion",
@@ -120,6 +134,21 @@ static void load_catalogue(void) {
 	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Package Manager",
 		"Existing package management interface", "/bin/gsudo", "package-manager", NULL, NULL);
 	fixed_count = item_count;
+
+	const char * recent_home = getenv("HOME");
+	if (recent_home) {
+		char recent_path[512];
+		if (snprintf(recent_path, sizeof(recent_path), "%s/.razion/recent-apps", recent_home) < (int)sizeof(recent_path)) {
+			FILE * recent_file = fopen(recent_path, "r");
+			if (recent_file) {
+				unsigned long index;
+				while (recent_count < 5 && fscanf(recent_file, "%lu", &index) == 1) {
+					if (index < fixed_count) recents[recent_count++] = index;
+				}
+				fclose(recent_file);
+			}
+		}
+	}
 
 	const char * home = getenv("HOME");
 	if (home && *home) {
@@ -146,14 +175,39 @@ static void load_catalogue(void) {
 
 static void rebuild_results(void) {
 	if (!query[0]) {
-		result_count = fixed_count < RESULT_CAPACITY ? fixed_count : RESULT_CAPACITY;
-		for (size_t i = 0; i < result_count; ++i) results[i] = i;
+		result_count = 0;
+		for (size_t i = 0; i < recent_count && result_count < RESULT_CAPACITY; ++i) results[result_count++] = recents[i];
+		for (size_t candidate = 0; candidate < fixed_count && result_count < RESULT_CAPACITY; ++candidate) {
+			int duplicate = 0;
+			for (size_t i = 0; i < result_count; ++i) if (results[i] == candidate) duplicate = 1;
+			if (!duplicate) results[result_count++] = candidate;
+		}
 	} else {
 		result_count = razion_search_rank(items, item_count, query,
 			results, RESULT_CAPACITY);
 	}
 	if (!result_count) selected = 0;
 	else if (selected >= result_count) selected = result_count - 1;
+}
+
+static void remember_recent(size_t index) {
+	if (index >= fixed_count) return;
+	size_t reordered[5];
+	size_t count = 0;
+	reordered[count++] = index;
+	for (size_t i = 0; i < recent_count && count < 5; ++i) if (recents[i] != index) reordered[count++] = recents[i];
+	memcpy(recents, reordered, count * sizeof(size_t));
+	recent_count = count;
+	const char * home = getenv("HOME");
+	if (!home) return;
+	char directory[512], path[1024];
+	if (snprintf(directory, sizeof(directory), "%s/.razion", home) >= (int)sizeof(directory)) return;
+	if (mkdir(directory, 0700) && errno != EEXIST) return;
+	snprintf(path, sizeof(path), "%s/recent-apps", directory);
+	FILE * file = fopen(path, "w");
+	if (!file) return;
+	for (size_t i = 0; i < recent_count; ++i) fprintf(file, "%zu\n", recents[i]);
+	fclose(file);
 }
 
 static int has_extension(const char * path, const char * extension) {
@@ -193,6 +247,7 @@ static void open_selected(void) {
 	razion_search_item_t * item = &items[index];
 	if (index < fixed_count) {
 		search_action_t * action = &actions[index];
+		remember_recent(index);
 		spawn_program(action->executable, action->argument1,
 			action->argument2, action->argument3);
 		return;
@@ -234,7 +289,7 @@ static void redraw(void) {
 	int usable = window->width - bounds.width - 68;
 	tt_set_size(font_bold, 24);
 	tt_draw_string(ctx, font_bold, left, bounds.top_height + 42,
-		"Universal Search", RAZION_TEXT_PRIMARY);
+		"Razion Launcher", RAZION_TEXT_PRIMARY);
 	tt_set_size(font, 12);
 	tt_draw_string(ctx, font, left, bounds.top_height + 64,
 		"Offline applications, settings, tools, files, and folders", RAZION_TEXT_SECONDARY);
@@ -295,7 +350,7 @@ static void redraw(void) {
 	tt_draw_string(ctx, font, left,
 		window->height - bounds.bottom_height - 18, status, RAZION_TEXT_SECONDARY);
 
-	render_decorations(window, ctx, "Razion Universal Search");
+	render_decorations(window, ctx, "Razion Launcher");
 	flip(ctx);
 	yutani_flip(yctx, window);
 }
@@ -345,7 +400,7 @@ int main(int argc, char * argv[]) {
 		yctx->display_width / 2 - window->width / 2,
 		yctx->display_height / 2 - window->height / 2);
 	yutani_window_advertise_icon(yctx, window,
-		"Razion Universal Search", "applications-generic");
+		"Razion Launcher", "razion-launcher");
 	ctx = init_graphics_yutani_double_buffer(window);
 	font = tt_font_from_shm("sans-serif");
 	font_bold = tt_font_from_shm("sans-serif.bold");
@@ -367,7 +422,10 @@ int main(int argc, char * argv[]) {
 					if (selected + 1 < result_count) selected++;
 					redraw();
 				} else if (key->event.key == '\n') {
-					open_selected();
+					if (result_count) {
+						open_selected();
+						running = 0;
+					}
 				} else if (key->event.key == '\b' || key->event.keycode == KEY_BACKSPACE) {
 					if (query_length) query[--query_length] = '\0';
 					selected = 0;
@@ -398,6 +456,7 @@ int main(int argc, char * argv[]) {
 							selected = row;
 							redraw();
 							open_selected();
+							running = 0;
 						}
 					}
 				}

@@ -343,9 +343,9 @@ int decor_handle_event_flags(yutani_t * yctx, yutani_msg_t * m, int flags) {
 				{
 					struct yutani_msg_window_mouse_event * me = (void*)m->data;
 					yutani_window_t * window = hashmap_get(yctx->windows, (void*)(uintptr_t)me->wid);
+					if (!window) return 0;
 					struct decor_bounds bounds;
 					decor_get_bounds(window, &bounds);
-					if (!window) return 0;
 					if (!(window->decorator_flags & DECOR_FLAG_DECORATED)) return 0;
 					if (me->command == YUTANI_MOUSE_EVENT_LEAVE && decor_hover_window == window) {
 						decor_hover_window = NULL;
@@ -440,7 +440,17 @@ int decor_handle_event_flags(yutani_t * yctx, yutani_msg_t * m, int flags) {
 							/* Determine if we clicked on a button */
 							switch (button) {
 								case DECOR_CLOSE:
-									if (callback_close) callback_close(window);
+									/*
+									 * Ask the compositor to close the window as well as
+									 * returning DECOR_CLOSE. Most clients consume the return
+									 * value directly, but the compositor request makes the
+									 * titlebar button reliable for every decorated client.
+									 */
+									if (callback_close) {
+										callback_close(window);
+									} else {
+										yutani_special_request(yctx, window, YUTANI_SPECIAL_REQUEST_PLEASE_CLOSE);
+									}
 									break;
 								case DECOR_RESIZE:
 									if (callback_resize) callback_resize(window);

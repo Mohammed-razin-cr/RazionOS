@@ -417,7 +417,7 @@ static void handle_key_event(struct yutani_msg_key_event * ke) {
 		return;
 	}
 
-	/* Super-Space = Open offline Universal Search */
+	/* Super-Space = Open the offline Razion Launcher */
 	if ((ke->event.modifiers & KEY_MOD_LEFT_SUPER) &&
 		(ke->event.keycode == ' ') &&
 		(ke->event.action == KEY_ACTION_DOWN)) {
@@ -654,7 +654,7 @@ static void update_window_list(void) {
 	redraw();
 }
 
-#define WALLPAPER_PATH "/usr/share/wallpapers/razion-dark.jpg"
+#define WALLPAPER_PATH "/usr/share/wallpapers/razion-premium.jpg"
 
 /* TODO: Share this with file-browser */
 static void blorp_wallpaper(uint32_t *outputs) {
@@ -801,7 +801,7 @@ static void bind_keys(void) {
 	/* Cltr-Alt-T = launch terminal */
 	yutani_key_bind(yctx, 't', KEY_MOD_LEFT_CTRL | KEY_MOD_LEFT_ALT, YUTANI_BIND_STEAL);
 
-	/* Super-Space = Universal Search */
+	/* Super-Space = Razion Launcher */
 	yutani_key_bind(yctx, ' ', KEY_MOD_LEFT_SUPER, YUTANI_BIND_STEAL);
 
 	/* Alt+Tab = app switcher*/
@@ -961,6 +961,7 @@ static const char ** load_config(void) {
 		"weather",
 		"date",
 		"clock",
+		"control",
 		"logout",
 		NULL
 	};

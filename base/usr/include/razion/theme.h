@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <toaru/graphics.h>
 
 /* Razion Dark */
@@ -60,7 +61,34 @@ static inline int razion_theme_is_light(void) {
 		if (!strncmp(line, "theme=light", 11)) {
 			cached = 1;
 			break;
+		} else if (!strncmp(line, "theme=auto", 10)) {
+			time_t now = time(NULL);
+			struct tm * local = localtime(&now);
+			cached = local && local->tm_hour >= 7 && local->tm_hour < 19;
+			break;
 		}
+	}
+	fclose(config);
+	return cached;
+}
+
+static inline uint32_t razion_theme_accent(void) {
+	static uint32_t cached;
+	if (cached) return cached;
+	cached = razion_theme_is_light() ? RAZION_LIGHT_ACCENT : RAZION_DARK_ACCENT;
+	const char * home = getenv("HOME");
+	if (!home) return cached;
+	char path[512];
+	if (snprintf(path, sizeof(path), "%s/.razion/theme.conf", home) >= (int)sizeof(path)) return cached;
+	FILE * config = fopen(path, "r");
+	if (!config) return cached;
+	char line[64];
+	while (fgets(line, sizeof(line), config)) {
+		if (!strncmp(line, "accent=blue", 11)) cached = rgb(74, 145, 247);
+		else if (!strncmp(line, "accent=violet", 13)) cached = rgb(151, 105, 245);
+		else if (!strncmp(line, "accent=orange", 13)) cached = rgb(235, 154, 72);
+		else if (!strncmp(line, "accent=rose", 11)) cached = rgb(226, 92, 132);
+		else if (!strncmp(line, "accent=teal", 11)) cached = razion_theme_is_light() ? RAZION_LIGHT_ACCENT : RAZION_DARK_ACCENT;
 	}
 	fclose(config);
 	return cached;
@@ -74,7 +102,7 @@ static inline int razion_theme_is_light(void) {
 #define RAZION_BORDER            (razion_theme_is_light() ? RAZION_LIGHT_BORDER : RAZION_DARK_BORDER)
 #define RAZION_TEXT_PRIMARY      (razion_theme_is_light() ? RAZION_LIGHT_TEXT_PRIMARY : RAZION_DARK_TEXT_PRIMARY)
 #define RAZION_TEXT_SECONDARY    (razion_theme_is_light() ? RAZION_LIGHT_TEXT_SECONDARY : RAZION_DARK_TEXT_SECONDARY)
-#define RAZION_ACCENT            (razion_theme_is_light() ? RAZION_LIGHT_ACCENT : RAZION_DARK_ACCENT)
+#define RAZION_ACCENT            (razion_theme_accent())
 #define RAZION_ACCENT_HOVER      (razion_theme_is_light() ? RAZION_LIGHT_ACCENT_HOVER : RAZION_DARK_ACCENT_HOVER)
 #define RAZION_SUCCESS           (razion_theme_is_light() ? RAZION_LIGHT_SUCCESS : RAZION_DARK_SUCCESS)
 #define RAZION_WARNING           (razion_theme_is_light() ? RAZION_LIGHT_WARNING : RAZION_DARK_WARNING)

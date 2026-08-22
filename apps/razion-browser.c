@@ -185,7 +185,7 @@ static void info_panel(int x, int y, int width, const char * title,
 }
 
 static void draw_home(int x, int y, int width, int height) {
-	tt_set_size(bold, 30); tt_draw_string(ctx, bold, x + 34, y + 68, "Razion Browser", RAZION_TEXT_PRIMARY);
+	tt_set_size(bold, 30); tt_draw_string(ctx, bold, x + 34, y + 68, "Ripper", RAZION_TEXT_PRIMARY);
 	tt_set_size(font, 12); tt_draw_string(ctx, font, x + 36, y + 94,
 		"A fast native shell being prepared for a secure web engine.", RAZION_TEXT_SECONDARY);
 	info_panel(x + 34, y + 126, width - 68, "Rendering engine status",
@@ -305,7 +305,7 @@ static void redraw(void) {
 	draw_rectangle_solid(ctx, ox + 10, oy + height - 27, width - 20, 1, RAZION_BORDER);
 	tt_set_size(font, 8); draw_ellipsized(font, 8, ox + 18, oy + height - 10,
 		status_text, width - 36, RAZION_TEXT_SECONDARY);
-	render_decorations(window, ctx, "Razion Browser");
+	render_decorations(window, ctx, "Ripper — Razion Browser");
 	flip(ctx);
 	yutani_flip(yctx, window);
 }
@@ -414,7 +414,7 @@ int main(void) {
 	window = yutani_window_create(yctx, width, height);
 	yutani_window_move(yctx, window, yctx->display_width / 2 - width / 2,
 		28 + (yctx->display_height - 28) / 2 - height / 2);
-	yutani_window_advertise_icon(yctx, window, "Razion Browser", "applications-internet");
+	yutani_window_advertise_icon(yctx, window, "Ripper — Razion Browser", "razion-ripper");
 	ctx = init_graphics_yutani_double_buffer(window);
 	font = tt_font_from_shm("sans-serif"); bold = tt_font_from_shm("sans-serif.bold");
 	razion_ai_init(&ai_context, "razion-browser"); ai_context.default_flags = RAZION_AI_FLAG_LOCAL_ONLY;

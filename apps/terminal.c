@@ -662,8 +662,10 @@ static void render_decors(void) {
 		menu_bar_render((struct menu_bar*)&terminal_menu_bar, ctx);
 	}
 
-	/* Advertise the window icon to the panel. */
-	yutani_window_advertise_icon(yctx, window, this_term()->terminal_title_length ? this_term()->terminal_title : "Terminal", "utilities-terminal");
+	/* Advertise a first-party icon that matches the terminal's current role. */
+	char * advertised_title = this_term()->terminal_title_length ? this_term()->terminal_title : "Terminal";
+	char * advertised_icon = strstr(advertised_title, "Razion AI") || strstr(advertised_title, "Pulse") ? "razion-pulse" : "razion-terminal";
+	yutani_window_advertise_icon(yctx, window, advertised_title, advertised_icon);
 
 	/*
 	 * Flip the whole window
@@ -1879,7 +1881,7 @@ static void * show_exit_dialog(void * _unused) {
 		snprintf(coords,100,"%d,%d",(int)window->width / 2,(int)window->height / 2);
 		char * args[] = {"showdialog",
 			"--title","Quit Terminal?",
-			"--icon","utilities-terminal",
+			"--icon","razion-terminal",
 			"--parent",wid,
 			"--at",coords,
 			"--okay-label", "Exit",
@@ -2281,7 +2283,7 @@ static void _menu_action_show_about(struct MenuEntry * self) {
 		char *args[] = {
 			"about-dialog",
 			"--title-about", "Terminal",
-			"--logo", "utilities-terminal",
+			"--logo", "razion-terminal",
 			"--icon", "star",
 			"--name", "RazionOS Terminal",
 			"--at", coords,

@@ -67,22 +67,33 @@ spacing remains component-level.
 - Login: dark inputs, semantic border/focus/error colors, original wallpaper
   treatment, and a minimal Razion mark.
 
+## Iconography
+
+First-party applications use the project-owned `razion-*` icon family in
+16 px, 24 px, and 48 px raster sizes, with editable SVG sources in
+`assets/icons/`. Icons share a compact rounded-square silhouette, restrained
+vertical highlight, subtle lower shadow, saturated semantic color, and a
+high-contrast glyph. The family is intentionally Razion-specific and does not
+reuse Apple, Microsoft, or other third-party application artwork.
+
+Dock icons default to 40 px with 6 px spacing. Hover enlargement is limited
+to 4 px and running applications use a small teal indicator rather than glow.
+
 ## Wallpaper
 
-`base/usr/share/wallpapers/razion-dark.jpg` is an original 1920×1080 project
-asset generated for this stage. Prompt:
+`base/usr/share/wallpapers/razion-premium.jpg` is the default original
+1920×1080 project asset. The lossless source is retained at
+`assets/razion-premium-source.png`; the installed JPEG uses 4:4:4 sampling for
+the native decoder. Prompt:
 
-> Create an original premium minimalist desktop wallpaper for an open-source
-> developer-focused operating system called RazionOS. Landscape 16:9, high
-> resolution. Deep layered charcoal and blue-black background (not pure
-> black), clean geometric architecture made of a few broad angled planes and
-> a subtle abstract radial R-shaped negative-space motif centered slightly
-> right. Restrained teal and cyan accent glow, very subtle depth, crisp clean
-> geometry, calm professional mood, lots of uncluttered space for desktop
-> icons and windows, no text, no logos, no UI mockup, no stars, no neon gaming
-> aesthetic, no excessive gradients, no glassmorphism, no resemblance to
-> Windows/macOS/GNOME/KDE wallpapers.
+> Create an original premium minimalist RazionOS wallpaper using deep
+> black-navy, broad abstract flowing geometric forms, restrained teal with
+> controlled blue and muted violet, a subtle geometric R made from layered
+> planes and negative space slightly right of center, and a quiet left third
+> for icons. No words, UI, people, third-party logos, watermark, neon gaming
+> effects, stars, glassmorphism, clutter, or resemblance to another desktop.
 
-The repository stores a JPEG for compatibility with existing wallpaper
-loaders. The Razion mark used by login and system information is deterministic
-geometric artwork created specifically for the project.
+The reference desktop image supplied for the final transformation was used
+only as a quality and atmosphere reference; its branding and UI composition
+were not copied. The Razion mark used by login and system information remains
+deterministic geometric artwork created specifically for the project.

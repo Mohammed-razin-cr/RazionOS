@@ -1299,7 +1299,7 @@ static void redraw_windows(yutani_globals_t * yg) {
 		int lm_x = yg->last_mouse_x / MOUSE_SCALE - MOUSE_OFFSET_X;
 		int lm_y = yg->last_mouse_y / MOUSE_SCALE - MOUSE_OFFSET_Y;
 		int tm_x = tmp_mouse_x / MOUSE_SCALE - MOUSE_OFFSET_X;
-		int tm_y = tmp_mouse_y / MOUSE_SCALE - MOUSE_OFFSET_X;
+		int tm_y = tmp_mouse_y / MOUSE_SCALE - MOUSE_OFFSET_Y;
 #ifdef ENABLE_BLUR_BEHIND
 		gfx_add_clip(yg->backend_ctx, lm_x - blur_radius, lm_y - blur_radius, MOUSE_WIDTH + blur_radius * 2, MOUSE_HEIGHT + blur_radius * 2);
 		gfx_add_clip(yg->backend_ctx, tm_x - blur_radius, tm_y - blur_radius, MOUSE_WIDTH + blur_radius * 2, MOUSE_HEIGHT + blur_radius * 2);

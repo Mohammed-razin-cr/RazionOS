@@ -10,13 +10,17 @@ exec about,star,About RazionOS
 log-out,exit,Log Out
 :accessories
 exec calculator,calculator,Calculator
-exec file-browser,folder,File Browser
-exec universal-search,applications-generic,Universal Search
+exec file-browser,razion-files,File Browser
+exec universal-search,razion-launcher,Razion Launcher
 exec razion-companion,star,Desktop Companion
-exec razion-store,package,Razion Store
-exec terminal pulse,utilities-terminal,Razion Pulse
-exec terminal razion-chat,utilities-terminal,Razion AI Chat
-exec terminal,utilities-terminal,Terminal
+exec razion-store,razion-store,Razion Store
+exec ripper,razion-ripper,Ripper
+exec razion-notes,razion-notes,Razion Notes
+exec razion-calendar,razion-calendar,Razion Calendar
+exec razion-media,razion-media,Razion Media Player
+exec terminal pulse,razion-pulse,Razion Pulse
+exec terminal razion-chat,razion-pulse,Razion AI Chat
+exec terminal,razion-terminal,Terminal
 :demos
 exec drawlines,drawlines,Draw Lines
 exec julia,julia,Julia Fractals
@@ -24,13 +28,15 @@ exec mandelbrot,mandelbrot,Mandelbrot Explorer
 exec plasma,plasma,Plasma
 exec polygons,polygons,Polygons
 :games
-exec mines.krk,mines,Mines
+exec razion-snake,razion-snake,Razion Snake
+exec razion-tiles,razion-tiles,Razion Tiles
 :internet
-exec razion-browser,applications-internet,Razion Browser
+exec ripper,razion-ripper,Ripper
 :system
-exec settings,applications-generic,Settings
-exec terminal sysinfo,system-monitor,System Information
+exec settings,razion-settings,Settings
+exec quick-settings,razion-settings,Quick Settings
+exec terminal sysinfo,razion-monitor,System Information
 exec gsudo package-manager,package,Package Manager
 exec wallpaper-picker,wallpaper-picker,Select Wallpaper
-exec cpuwidget,system-monitor,System Monitor
+exec cpuwidget,razion-monitor,System Monitor
 exec gsudo reboot,reboot,Restart

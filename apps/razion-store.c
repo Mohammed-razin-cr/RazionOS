@@ -45,18 +45,19 @@ typedef struct {
 } store_app_t;
 
 static const store_app_t catalogue[] = {
-	{"Razion Store", "razion-store", "Browse verified system applications and inspect future package security requirements.", "0.1.0", "System image", "System", "package", "/bin/razion-store", "NCSA", "rzpkg metadata, Razion graphics", "installed applications: read; optional local AI", "Added fail-closed repository and permission surfaces.", 1},
-	{"Razion Browser", "razion-browser", "Native tabbed browser shell with explicit web-engine and offline status.", "0.1.0", "System image", "Internet", "applications-internet", "/bin/razion-browser", "NCSA", "Razion graphics, network status", "network status: read; optional local AI", "Added tabs, history, bookmarks, downloads, and privacy settings.", 1},
+	{"Razion Store", "razion-store", "Browse verified system applications and inspect future package security requirements.", "0.1.0", "System image", "System", "razion-store", "/bin/razion-store", "NCSA", "rzpkg metadata, Razion graphics", "installed applications: read; optional local AI", "Added fail-closed repository and permission surfaces.", 1},
+	{"Ripper", "ripper", "Native first-party browser shell with explicit web-engine and offline status.", "0.1.0", "System image", "Internet", "razion-ripper", "/bin/ripper", "NCSA", "Razion graphics, network status", "network status: read; optional local AI", "Added tabs, history, bookmarks, downloads, and privacy settings.", 1},
 	{"Desktop Companion", "razion-companion", "An offline companion with care, activities, customization, and desktop mode.", "0.1.0", "974 KiB", "Utilities", "star", "/bin/razion-companion", "NCSA", "Razion graphics, Yutani", "desktop overlay; local settings", "Native dashboard and 22 companion species.", 1},
-	{"Universal Search", "universal-search", "Fast local search for applications, settings, files, and folders.", "0.1.0", "148 KiB", "Utilities", "applications-generic", "/bin/universal-search", "NCSA", "Razion Search", "user files: read metadata", "Added bounded offline file search.", 1},
+	{"Razion Launcher", "universal-search", "Fast local search for applications, settings, files, and folders.", "0.1.0", "148 KiB", "Utilities", "razion-launcher", "/bin/universal-search", "NCSA", "Razion Search", "user files: read metadata", "Added bounded offline file search.", 1},
 	{"Bim Editor", "bim", "Lightweight terminal text editor with syntax highlighting.", "3.x", "682 KiB", "Development", "accessories-text-editor", "/bin/bim", "NCSA", "Kuroko runtime components", "user files: read/write", "Bundled editor from the base system.", 1},
-	{"Terminal", "terminal", "Native terminal emulator for the Razion shell environment.", "2.x", "416 KiB", "System", "utilities-terminal", "/bin/terminal", "NCSA", "Razion text and graphics", "process launch; pseudo-terminal", "Uses the current Razion theme palette.", 1},
-	{"File Manager", "file-browser", "Browse local folders, launch files, and manage the desktop.", "2.x", "396 KiB", "System", "folder", "/bin/file-browser", "NCSA", "Razion graphics", "user files: read/write; process launch", "Desktop and file views share one native implementation.", 1},
+	{"Terminal", "terminal", "Native terminal emulator for the Razion shell environment.", "2.x", "416 KiB", "System", "razion-terminal", "/bin/terminal", "NCSA", "Razion text and graphics", "process launch; pseudo-terminal", "Uses the current Razion theme palette.", 1},
+	{"File Manager", "file-browser", "Browse local folders, launch files, and manage the desktop.", "2.x", "396 KiB", "System", "razion-files", "/bin/file-browser", "NCSA", "Razion graphics", "user files: read/write; process launch", "Desktop and file views share one native implementation.", 1},
 	{"Image Viewer", "imgviewer", "Open common local image formats with a native lightweight viewer.", "2.x", "121 KiB", "Graphics", "image-x-generic", "/bin/imgviewer", "NCSA", "PNG, JPEG, graphics", "selected files: read", "Supports the image codecs included in RazionOS.", 0},
 	{"Calculator", "calculator", "A focused native calculator for everyday arithmetic.", "2.x", "94 KiB", "Education", "accessories-calculator", "/bin/calculator", "NCSA", "Razion graphics", "none", "Bundled scientific and standard calculations.", 0},
 	{"Help", "help-browser", "Read the local RazionOS documentation without a network connection.", "2.x", "102 KiB", "Education", "help-browser", "/bin/help-browser", "NCSA", "Markup renderer", "system documentation: read", "Local rich-text help topics.", 0},
-	{"System Monitor", "cpuwidget", "Inspect live CPU, memory, and network activity.", "2.x", "137 KiB", "System", "system-monitor", "/bin/cpuwidget", "NCSA", "procfs", "system metrics: read", "Native live performance charts.", 0},
-	{"Mines", "mines", "A compact native puzzle game included with RazionOS.", "2.x", "65 KiB", "Games", "applications-games", "/bin/mines.krk", "NCSA", "Kuroko", "none", "Classic mine-clearing gameplay.", 0},
+	{"System Monitor", "cpuwidget", "Inspect live CPU, memory, and network activity.", "2.x", "137 KiB", "System", "razion-monitor", "/bin/cpuwidget", "NCSA", "procfs", "system metrics: read", "Native live performance charts.", 0},
+	{"Razion Snake", "razion-snake", "A lightweight native arcade game with keyboard controls and scoring.", "1.0.0", "System image", "Games", "razion-snake", "/bin/razion-snake", "NCSA", "Razion graphics, Yutani", "none", "Added responsive arcade gameplay and restart controls.", 0},
+	{"Razion Tiles", "razion-tiles", "A native 2048-style number puzzle with local score tracking.", "1.0.0", "System image", "Games", "razion-tiles", "/bin/razion-tiles", "NCSA", "Razion graphics, Yutani", "none", "Added keyboard-driven tile merging and restart controls.", 0},
 };
 
 static const char * categories[] = {"Development", "Internet", "Graphics", "Education",
@@ -392,7 +393,7 @@ int main(void) {
 	window = yutani_window_create(yctx, width, height);
 	yutani_window_move(yctx, window, yctx->display_width / 2 - width / 2,
 		28 + (yctx->display_height - 28) / 2 - height / 2);
-	yutani_window_advertise_icon(yctx, window, "Razion Store", "package");
+	yutani_window_advertise_icon(yctx, window, "Razion Store", "razion-store");
 	ctx = init_graphics_yutani_double_buffer(window);
 	font = tt_font_from_shm("sans-serif");
 	bold = tt_font_from_shm("sans-serif.bold");

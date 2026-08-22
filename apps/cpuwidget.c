@@ -29,6 +29,7 @@
 #include <toaru/decorations.h>
 #include <toaru/text.h>
 #include <toaru/menu.h>
+#include <razion/theme.h>
 
 static int left, top, width, height;
 
@@ -168,13 +169,13 @@ static void draw_lines(gfx_context_t * ctx) {
 		line = tt_contour_line_to(line, (int)(unit_width * 10.0 * i) + 0.5, ctx->height);
 		struct TT_Shape * shape = tt_contour_stroke_shape(line, 0.5);
 		free(line);
-		tt_path_paint(ctx, shape, rgb(150,150,150));
+		tt_path_paint(ctx, shape, RAZION_BORDER);
 		free(shape);
 	}
 }
 
 static void draw_cpu_graphs(gfx_context_t * ctx, float shift) {
-	draw_fill(ctx, rgb(0xF8,0xF8,0xF8));
+	draw_fill(ctx, RAZION_SURFACE);
 	draw_lines(ctx);
 	for (int i = 0; i < cpu_count; ++i) {
 		plot_graph(ctx, 1000, cpu_samples[i], colors[i], shift);
@@ -220,7 +221,7 @@ static void get_mem_info(int * total, int * used) {
 static long mem_samples[100];
 static long mem_total;
 static void draw_mem_graphs(gfx_context_t * ctx, float shift) {
-	draw_fill(ctx, rgb(0xF8,0xF8,0xF8));
+	draw_fill(ctx, RAZION_SURFACE);
 	draw_lines(ctx);
 	plot_graph(ctx, mem_total, mem_samples, rgb(250,110,240), shift);
 }
@@ -301,7 +302,7 @@ static void redraw_net_scale(void);
 static int if_count = -1;
 
 static void draw_net_graphs(gfx_context_t * ctx, float shift) {
-	draw_fill(ctx, rgb(0xF8,0xF8,0xF8));
+	draw_fill(ctx, RAZION_SURFACE);
 	draw_lines(ctx);
 	for (int i = 0; i < if_count; ++i) {
 		plot_graph(ctx, net_scale, net_samples[i], if_colors[i], shift);
@@ -380,7 +381,7 @@ static void draw_legend_element(int which, int count, int index, uint32_t color,
 
 	if (unit_width > 22) {
 		char * label_cropped = tt_ellipsify(label, 12, tt_thin, unit_width - 22, NULL);
-		tt_draw_string(ctx_base, tt_thin, 22 + unit_x, y + 14, label_cropped, rgb(0,0,0));
+		tt_draw_string(ctx_base, tt_thin, 22 + unit_x, y + 14, label_cropped, RAZION_TEXT_PRIMARY);
 		free(label_cropped);
 	}
 
@@ -440,8 +441,8 @@ static void redraw_net_scale(void) {
 	char net_max[100];
 	snprintf(net_max, 100, "%0.2fmbps", (double)net_scale / 1024.0);
 	int swidth = tt_string_width(tt_thin, net_max) + 2;
-	draw_rectangle(ctx_base, bounds.left_width + width - swidth, MENU_BAR_HEIGHT + bounds.top_height + 2 * (top_pad + bottom_pad + graph_height), swidth, 20, rgb(204,204,204));
-	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - swidth, MENU_BAR_HEIGHT + bounds.top_height + 2 * (top_pad + bottom_pad + graph_height) + 17, net_max, rgb(0,0,0));
+	draw_rectangle(ctx_base, bounds.left_width + width - swidth, MENU_BAR_HEIGHT + bounds.top_height + 2 * (top_pad + bottom_pad + graph_height), swidth, 20, RAZION_BACKGROUND);
+	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - swidth, MENU_BAR_HEIGHT + bounds.top_height + 2 * (top_pad + bottom_pad + graph_height) + 17, net_max, RAZION_TEXT_SECONDARY);
 }
 
 void render_base(void) {
@@ -466,33 +467,33 @@ static void initial_stuff(void) {
 	menu_bar.width = ctx_base->width - bounds.width;
 	menu_bar.window = wina;
 
-	draw_fill(ctx_base, rgb(204,204,204));
+	draw_fill(ctx_base, RAZION_BACKGROUND);
 
 	ctx_cpu = init_graphics_subregion(ctx_base, bounds.left_width + left_pad, MENU_BAR_HEIGHT + bounds.top_height + top_pad, width - h_pad, graph_height);
 	ctx_mem = init_graphics_subregion(ctx_base, bounds.left_width + left_pad, MENU_BAR_HEIGHT + bounds.top_height + 2 * top_pad + graph_height + bottom_pad, width - h_pad, graph_height);
 	ctx_net = init_graphics_subregion(ctx_base, bounds.left_width + left_pad, MENU_BAR_HEIGHT + bounds.top_height + 3 * top_pad + 2 * graph_height + 2 * bottom_pad, width - h_pad, graph_height);
 
-	draw_fill(ctx_cpu, rgb(0xF8,0xF8,0xF8));
-	draw_fill(ctx_mem, rgb(0xF8,0xF8,0xF8));
-	draw_fill(ctx_net, rgb(0xF8,0xF8,0xF8));
+	draw_fill(ctx_cpu, RAZION_SURFACE);
+	draw_fill(ctx_mem, RAZION_SURFACE);
+	draw_fill(ctx_net, RAZION_SURFACE);
 
 	tt_set_size(tt_bold, 13);
-	tt_draw_string(ctx_base, tt_bold, bounds.left_width + 3, MENU_BAR_HEIGHT + bounds.top_height + 14, "CPU", rgb(0,0,0));
-	tt_draw_string(ctx_base, tt_bold, bounds.left_width + 3, MENU_BAR_HEIGHT + bounds.top_height + (top_pad + bottom_pad + graph_height) + 14, "Memory", rgb(0,0,0));
-	tt_draw_string(ctx_base, tt_bold, bounds.left_width + 3, MENU_BAR_HEIGHT + bounds.top_height + 2 * (top_pad + bottom_pad + graph_height) + 14, "Network", rgb(0,0,0));
+	tt_draw_string(ctx_base, tt_bold, bounds.left_width + 3, MENU_BAR_HEIGHT + bounds.top_height + 14, "CPU", RAZION_TEXT_PRIMARY);
+	tt_draw_string(ctx_base, tt_bold, bounds.left_width + 3, MENU_BAR_HEIGHT + bounds.top_height + (top_pad + bottom_pad + graph_height) + 14, "Memory", RAZION_TEXT_PRIMARY);
+	tt_draw_string(ctx_base, tt_bold, bounds.left_width + 3, MENU_BAR_HEIGHT + bounds.top_height + 2 * (top_pad + bottom_pad + graph_height) + 14, "Network", RAZION_TEXT_PRIMARY);
 
 	tt_set_size(tt_thin, 10);
-	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - 30, MENU_BAR_HEIGHT + bounds.top_height + 17, "100%", rgb(0,0,0));
-	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - 30, MENU_BAR_HEIGHT + bounds.top_height + (top_pad + bottom_pad + graph_height) + 17, "100%", rgb(0,0,0));
+	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - 30, MENU_BAR_HEIGHT + bounds.top_height + 17, "100%", RAZION_TEXT_SECONDARY);
+	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - 30, MENU_BAR_HEIGHT + bounds.top_height + (top_pad + bottom_pad + graph_height) + 17, "100%", RAZION_TEXT_SECONDARY);
 
 	char net_max[100];
 	snprintf(net_max, 100, "%0.2fmbps", (double)net_scale / 1024.0);
 	int swidth = tt_string_width(tt_thin, net_max) + 2;
-	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - swidth, MENU_BAR_HEIGHT + bounds.top_height + 2 * (top_pad + bottom_pad + graph_height) + 17, net_max, rgb(0,0,0));
+	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - swidth, MENU_BAR_HEIGHT + bounds.top_height + 2 * (top_pad + bottom_pad + graph_height) + 17, net_max, RAZION_TEXT_SECONDARY);
 
-	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - 25, MENU_BAR_HEIGHT + bounds.top_height + top_pad + graph_height + 13, "0%", rgb(0,0,0));
-	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - 25, MENU_BAR_HEIGHT + bounds.top_height + 2 * (top_pad + graph_height) + bottom_pad + 13, "0%", rgb(0,0,0));
-	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - 40, MENU_BAR_HEIGHT + bounds.top_height + 3 * (top_pad + graph_height) + 2 * bottom_pad + 13, "0mbps", rgb(0,0,0));
+	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - 25, MENU_BAR_HEIGHT + bounds.top_height + top_pad + graph_height + 13, "0%", RAZION_TEXT_SECONDARY);
+	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - 25, MENU_BAR_HEIGHT + bounds.top_height + 2 * (top_pad + graph_height) + bottom_pad + 13, "0%", RAZION_TEXT_SECONDARY);
+	tt_draw_string(ctx_base, tt_thin, bounds.left_width + width - 40, MENU_BAR_HEIGHT + bounds.top_height + 3 * (top_pad + graph_height) + 2 * bottom_pad + 13, "0mbps", RAZION_TEXT_SECONDARY);
 
 	render_base();
 
@@ -544,7 +545,7 @@ static void _menu_action_about(struct MenuEntry * entry) {
 		char *args[] = {
 			"about-dialog",
 			"--title-about", "System Monitor",
-			"--logo", "system-monitor",
+			"--logo", "razion-monitor",
 			"--icon", "star",
 			"--name", "System Monitor",
 			"--at", coords,
@@ -593,7 +594,7 @@ int main (int argc, char ** argv) {
 
 	wina = yutani_window_create(yctx, width + bounds.width, height + bounds.height + MENU_BAR_HEIGHT);
 	yutani_window_move(yctx, wina, left, top);
-	yutani_window_advertise_icon(yctx, wina, "System Monitor", "system-monitor");
+	yutani_window_advertise_icon(yctx, wina, "System Monitor", "razion-monitor");
 
 	ctx_base = init_graphics_yutani_double_buffer(wina);
 
@@ -712,4 +713,3 @@ int main (int argc, char ** argv) {
 
 	return 0;
 }
-

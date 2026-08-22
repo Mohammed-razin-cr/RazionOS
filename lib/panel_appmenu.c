@@ -14,8 +14,8 @@ static struct MenuList * appmenu;
 static int widget_draw_appmenu(struct PanelWidget * this, gfx_context_t * ctx) {
 	panel_highlight_widget(this,ctx, !!appmenu->window);
 	tt_set_size(this->pctx->font_bold, 14);
-	int brand_width = tt_string_width(this->pctx->font_bold, "Razion");
-	tt_draw_string(ctx, this->pctx->font_bold, 12, 22, "Razion", this->pctx->color_special);
+	int brand_width = tt_string_width(this->pctx->font_bold, "RazionOS");
+	tt_draw_string(ctx, this->pctx->font_bold, 12, 22, "RazionOS", this->pctx->color_special);
 	tt_set_size(this->pctx->font, 14);
 	tt_draw_string(ctx, this->pctx->font, 22 + brand_width, 22, "Applications", appmenu->window ? this->pctx->color_text_hilighted : this->pctx->color_text_normal);
 	return 0;

@@ -11,5 +11,9 @@ toastd --really # Daemonizes
 # Login toast notifications
 show-toasts.krk &
 
+# Lightweight first-party desktop surfaces
+razion-dock &
+razion-companion --overlay &
+
 # Replace us with the panel
 exec panel --really

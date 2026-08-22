@@ -22,6 +22,7 @@
 #include <toaru/graphics.h>
 #include <toaru/json.h>
 #include <toaru/list.h>
+#include <razion/theme.h>
 
 typedef struct JSON_Value JSON_Value;
 
@@ -40,10 +41,24 @@ struct ToastNotification {
 #define PAD_TOP   32
 #define TOAST_WIDTH  310
 #define TOAST_HEIGHT 110
-#define TOAST_BORDER     rgba(70,70,70,150)
-#define TOAST_BACKGROUND rgba(0,0,0,150)
+#define TOAST_BORDER     rgba(74,92,108,210)
+#define TOAST_BACKGROUND rgba(17,23,31,245)
+
+static int do_not_disturb(void) {
+	const char * home = getenv("HOME");
+	if (!home) return 0;
+	char path[512], line[64];
+	if (snprintf(path, sizeof(path), "%s/.razion/notifications.conf", home) >= (int)sizeof(path)) return 0;
+	FILE * file = fopen(path, "r");
+	if (!file) return 0;
+	int enabled = 0;
+	while (fgets(line, sizeof(line), file)) if (!strncmp(line, "dnd=1", 5)) enabled = 1;
+	fclose(file);
+	return enabled;
+}
 
 static void handle_msg(JSON_Value * msg) {
+	if (do_not_disturb()) return;
 	if (msg->type != JSON_TYPE_OBJECT) {
 		fprintf(stderr, "expected an object, but json value was of type %d\n", msg->type);
 		return;
@@ -113,7 +128,7 @@ static void handle_msg(JSON_Value * msg) {
 
 	int height = markup_string_height(msg_body->string);
 
-	markup_draw_string(ctx, 10 + textOffset, (ctx->height - height) / 2, msg_body->string, rgb(255,255,255));
+	markup_draw_string(ctx, 10 + textOffset, (ctx->height - height) / 2, msg_body->string, RAZION_TEXT_PRIMARY);
 	yutani_flip(yctx, win);
 }
 

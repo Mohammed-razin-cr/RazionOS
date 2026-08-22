@@ -37,7 +37,7 @@
 
 #define APPLICATION_TITLE "File Browser"
 #define SCROLL_AMOUNT 120
-#define WALLPAPER_PATH "/usr/share/wallpapers/razion-dark.jpg"
+#define WALLPAPER_PATH "/usr/share/wallpapers/razion-premium.jpg"
 
 struct File {
 	char name[256];      /* Displayed name (icon label) */
@@ -403,7 +403,7 @@ static void set_title(char * directory) {
 	}
 
 	/* Advertise to the panel */
-	yutani_window_advertise_icon(yctx, main_window, title, "folder");
+	yutani_window_advertise_icon(yctx, main_window, title, "razion-files");
 }
 
 /**
@@ -875,11 +875,17 @@ static void reinitialize_contents(void) {
 	_decor_get_bounds(main_window, &bounds);
 
 	if (is_desktop_background) {
-		/**
-		 * TODO: Actually calculate an optimal FILE_PTR_WIDTH or fix this to
-		 *       work properly with vertical rows of files
+		/*
+		 * Keep the shortcut grid above the dock. At shorter display heights,
+		 * wrap into additional columns instead of clipping the final entries.
 		 */
-		FILE_PTR_WIDTH = 1;
+		int desktop_rows = (available_height - 80) / FILE_HEIGHT;
+		if (desktop_rows < 1) desktop_rows = 1;
+		FILE_PTR_WIDTH = (file_pointers_len + desktop_rows - 1) / desktop_rows;
+		if (FILE_PTR_WIDTH < 1) FILE_PTR_WIDTH = 1;
+		int max_columns = (ctx->width - bounds.width) / FILE_WIDTH;
+		if (max_columns < 1) max_columns = 1;
+		if (FILE_PTR_WIDTH > max_columns) FILE_PTR_WIDTH = max_columns;
 	} else if (view_mode == VIEW_MODE_LIST) {
 		FILE_PTR_WIDTH = 1;
 		FILE_WIDTH = (ctx->width - bounds.width);
@@ -1390,6 +1396,7 @@ static void resize_finish(int w, int h) {
 	}
 
 	int width_changed = (main_window->width != (unsigned int)w);
+	int height_changed = (main_window->height != (unsigned int)h);
 
 	yutani_window_resize_accept(yctx, main_window, w, h);
 	reinit_graphics_yutani(ctx, main_window);
@@ -1401,8 +1408,8 @@ static void resize_finish(int w, int h) {
 	available_height = ctx->height - menu_bar_height - nav_bar_height - bounds.height - (is_desktop_background ? 0 : STATUS_HEIGHT);
 	fprintf(stderr, "available_height = %d; bounds.bottom_height = %d, (isd...) = %d\n", available_height, bounds.bottom_height, (is_desktop_background ? 0 : STATUS_HEIGHT));
 
-	/* If the width changed, we need to rebuild the icon view */
-	if (width_changed) {
+	/* Desktop wrapping depends on height as well as width. */
+	if (width_changed || (is_desktop_background && height_changed)) {
 		reinitialize_contents();
 	}
 
