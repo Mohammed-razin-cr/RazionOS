@@ -1383,6 +1383,117 @@ void draw_line_aa(gfx_context_t * ctx, int x_1, int x_2, int y_1, int y_2, uint3
 	draw_line_aa_points(ctx,&v,&w,color,thickness);
 }
 
+static void png_write_u32(FILE * out, uint32_t value) {
+	uint8_t bytes[4] = {
+		(uint8_t)(value >> 24), (uint8_t)(value >> 16),
+		(uint8_t)(value >> 8), (uint8_t)value,
+	};
+	fwrite(bytes, 1, sizeof(bytes), out);
+}
+
+static uint32_t png_crc_update(uint32_t crc, const void * data, size_t length) {
+	const uint8_t * bytes = data;
+	while (length--) {
+		crc ^= *bytes++;
+		for (int bit = 0; bit < 8; ++bit)
+			crc = (crc >> 1) ^ (0xEDB88320U & (uint32_t)-(int32_t)(crc & 1));
+	}
+	return crc;
+}
+
+static void png_write_chunk(FILE * out, const char type[4], const void * data, uint32_t length) {
+	png_write_u32(out, length);
+	fwrite(type, 1, 4, out);
+	if (length) fwrite(data, 1, length, out);
+	uint32_t crc = png_crc_update(0xFFFFFFFFU, type, 4);
+	if (length) crc = png_crc_update(crc, data, length);
+	png_write_u32(out, crc ^ 0xFFFFFFFFU);
+}
+
+static uint32_t png_adler32(const uint8_t * data, size_t length) {
+	uint32_t first = 1, second = 0;
+	while (length) {
+		size_t block = length > 5552 ? 5552 : length;
+		length -= block;
+		while (block--) {
+			first += *data++;
+			second += first;
+		}
+		first %= 65521;
+		second %= 65521;
+	}
+	return (second << 16) | first;
+}
+
+static int gfx_buffer_write_png(FILE * out, gfx_context_t * ctx, uint32_t * buffer, int alpha) {
+	if (!buffer || !ctx->width || !ctx->height) return 1;
+	size_t channels = alpha ? 4 : 3;
+	size_t row_size = (size_t)ctx->width * channels + 1;
+	if (row_size > SIZE_MAX / ctx->height) return 1;
+	size_t raw_size = row_size * ctx->height;
+	uint8_t * raw = malloc(raw_size);
+	if (!raw) return 1;
+
+	for (int y = 0; y < ctx->height; ++y) {
+		uint8_t * row = raw + (size_t)y * row_size;
+		row[0] = 0; /* No per-row filtering keeps this encoder small and deterministic. */
+		uint32_t * pixels = (uint32_t *)((uint8_t *)buffer + (size_t)y * ctx->stride);
+		for (int x = 0; x < ctx->width; ++x) {
+			uint32_t pixel = pixels[x];
+			row[1 + x * channels + 0] = _RED(pixel);
+			row[1 + x * channels + 1] = _GRE(pixel);
+			row[1 + x * channels + 2] = _BLU(pixel);
+			if (alpha) row[1 + x * channels + 3] = _ALP(pixel);
+		}
+	}
+
+	static const uint8_t signature[8] = {137, 'P', 'N', 'G', 13, 10, 26, 10};
+	fwrite(signature, 1, sizeof(signature), out);
+	uint8_t ihdr[13] = {
+		0, 0, (uint8_t)(ctx->width >> 8), (uint8_t)ctx->width,
+		0, 0, (uint8_t)(ctx->height >> 8), (uint8_t)ctx->height,
+		8, alpha ? 6 : 2, 0, 0, 0,
+	};
+	png_write_chunk(out, "IHDR", ihdr, sizeof(ihdr));
+
+	size_t blocks = (raw_size + 65534) / 65535;
+	if (raw_size > UINT32_MAX - 6 - blocks * 5) { free(raw); return 1; }
+	uint32_t idat_length = (uint32_t)(2 + raw_size + blocks * 5 + 4);
+	png_write_u32(out, idat_length);
+	fwrite("IDAT", 1, 4, out);
+	uint32_t crc = png_crc_update(0xFFFFFFFFU, "IDAT", 4);
+	uint8_t zlib_header[2] = {0x78, 0x01};
+	fwrite(zlib_header, 1, 2, out);
+	crc = png_crc_update(crc, zlib_header, 2);
+
+	size_t offset = 0;
+	while (offset < raw_size) {
+		uint16_t length = raw_size - offset > 65535 ? 65535 : (uint16_t)(raw_size - offset);
+		uint16_t inverse = ~length;
+		uint8_t header[5] = {
+			(uint8_t)(offset + length == raw_size),
+			(uint8_t)length, (uint8_t)(length >> 8),
+			(uint8_t)inverse, (uint8_t)(inverse >> 8),
+		};
+		fwrite(header, 1, sizeof(header), out);
+		fwrite(raw + offset, 1, length, out);
+		crc = png_crc_update(crc, header, sizeof(header));
+		crc = png_crc_update(crc, raw + offset, length);
+		offset += length;
+	}
+	uint32_t adler = png_adler32(raw, raw_size);
+	uint8_t adler_bytes[4] = {
+		(uint8_t)(adler >> 24), (uint8_t)(adler >> 16),
+		(uint8_t)(adler >> 8), (uint8_t)adler,
+	};
+	fwrite(adler_bytes, 1, sizeof(adler_bytes), out);
+	crc = png_crc_update(crc, adler_bytes, sizeof(adler_bytes));
+	png_write_u32(out, crc ^ 0xFFFFFFFFU);
+	png_write_chunk(out, "IEND", NULL, 0);
+	free(raw);
+	return ferror(out) ? 1 : 0;
+}
+
 int gfx_buffer_write(FILE * out, gfx_context_t * ctx, unsigned long flags) {
 	uint32_t * buffer = (uint32_t*)((flags & GFX_WRITE_FLAG_BACKBUF) ? ctx->backbuffer : ctx->buffer);
 	int width = ctx->width;
@@ -1391,6 +1502,10 @@ int gfx_buffer_write(FILE * out, gfx_context_t * ctx, unsigned long flags) {
 
 	if (!(flags & GFX_WRITE_FORMAT)) {
 		flags |= GFX_WRITE_FORMAT_TARGA;
+	}
+
+	if ((flags & GFX_WRITE_FORMAT) == GFX_WRITE_FORMAT_PNG) {
+		return gfx_buffer_write_png(out, ctx, buffer, alpha);
 	}
 
 	if ((flags & GFX_WRITE_FORMAT) != GFX_WRITE_FORMAT_TARGA) {
@@ -1411,12 +1526,13 @@ int gfx_buffer_write(FILE * out, gfx_context_t * ctx, unsigned long flags) {
 		fwrite(&header, 1, sizeof(header), out);
 
 		for (int y = height-1; y>=0; y--) {
+			uint32_t * pixels = (uint32_t *)((uint8_t *)buffer + (size_t)y * ctx->stride);
 			for (int x = 0; x < width; ++x) {
 				uint8_t buf[4] = {
-					_BLU(buffer[y * width + x]),
-					_GRE(buffer[y * width + x]),
-					_RED(buffer[y * width + x]),
-					_ALP(buffer[y * width + x]),
+					_BLU(pixels[x]),
+					_GRE(pixels[x]),
+					_RED(pixels[x]),
+					_ALP(pixels[x]),
 				};
 				fwrite(buf, 1, alpha ? 4 : 3, out);
 			}

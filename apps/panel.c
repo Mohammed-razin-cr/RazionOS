@@ -417,8 +417,8 @@ static void handle_key_event(struct yutani_msg_key_event * ke) {
 		return;
 	}
 
-	/* Super-Space = Open the offline Razion Launcher */
-	if ((ke->event.modifiers & KEY_MOD_LEFT_SUPER) &&
+	/* Ctrl-Space (and the legacy Super-Space binding) = Razion Launcher. */
+	if ((ke->event.modifiers & (KEY_MOD_LEFT_CTRL | KEY_MOD_RIGHT_CTRL | KEY_MOD_LEFT_SUPER)) &&
 		(ke->event.keycode == ' ') &&
 		(ke->event.action == KEY_ACTION_DOWN)) {
 		launch_application("exec universal-search");
@@ -803,6 +803,9 @@ static void bind_keys(void) {
 
 	/* Super-Space = Razion Launcher */
 	yutani_key_bind(yctx, ' ', KEY_MOD_LEFT_SUPER, YUTANI_BIND_STEAL);
+	/* Ctrl-Space = primary Razion Launcher shortcut (both Ctrl keys). */
+	yutani_key_bind(yctx, ' ', KEY_MOD_LEFT_CTRL, YUTANI_BIND_STEAL);
+	yutani_key_bind(yctx, ' ', KEY_MOD_RIGHT_CTRL, YUTANI_BIND_STEAL);
 
 	/* Alt+Tab = app switcher*/
 	yutani_key_bind(yctx, '\t', KEY_MOD_LEFT_ALT, YUTANI_BIND_STEAL);

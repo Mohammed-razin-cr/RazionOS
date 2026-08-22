@@ -139,7 +139,7 @@ extern void gfx_apply_matrix(double x, double y, gfx_matrix_t matrix, double *ou
 
 #define GFX_WRITE_FORMAT         0x00000007
 #define  GFX_WRITE_FORMAT_TARGA  0x00000001
-/*       reserved _FORMAT_PNG    0x00000002 */
+#define  GFX_WRITE_FORMAT_PNG    0x00000002
 /*       reserved _FORMAT_JPG    0x00000003 */
 
 #define GFX_WRITE_FLAG_BACKBUF  0x00000010

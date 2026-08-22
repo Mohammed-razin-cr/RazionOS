@@ -1024,9 +1024,9 @@ static void yutani_screenshot(yutani_globals_t * yg) {
 	int task = yg->screenshot_frame;
 	yg->screenshot_frame = 0;
 
-	/* raw screenshots */
+	/* PNG screenshots are kept in the user's standard Pictures directory. */
 	gfx_context_t * ctx;
-	unsigned long flags = GFX_WRITE_FORMAT_TARGA;
+	unsigned long flags = GFX_WRITE_FORMAT_PNG;
 
 	gfx_context_t _window;
 
@@ -1036,9 +1036,16 @@ static void yutani_screenshot(yutani_globals_t * yg) {
 			flags |= GFX_WRITE_FLAG_BACKBUF;
 			break;
 		case YUTANI_SCREENSHOT_WINDOW:
+			if (!yg->focused_window) {
+				TRACE("Can not capture a focused window: no window is focused.");
+				return;
+			}
 			_window.width = yg->focused_window->width;
 			_window.height = yg->focused_window->height;
+			_window.depth = 32;
+			_window.stride = _window.width * 4;
 			_window.buffer = (char*)yg->focused_window->buffer;
+			_window.backbuffer = NULL;
 			ctx = &_window;
 			flags |= GFX_WRITE_FLAG_ALPHA;
 			break;
@@ -1047,12 +1054,28 @@ static void yutani_screenshot(yutani_globals_t * yg) {
 			return;
 	}
 
+	const char * picture_directory = "/home/local/Pictures";
+	const char * screenshot_directory = "/home/local/Pictures/Screenshots";
+	struct stat owner;
+	if (mkdir(picture_directory, 0755) && errno != EEXIST) {
+		TRACE("Error creating Pictures directory for screenshot: %s", strerror(errno));
+		return;
+	}
+	if (!stat("/home/local", &owner)) chown(picture_directory, owner.st_uid, owner.st_gid);
+	if (mkdir(screenshot_directory, 0755) && errno != EEXIST) {
+		TRACE("Error creating Screenshots directory: %s", strerror(errno));
+		return;
+	}
+	if (!stat(picture_directory, &owner)) chown(screenshot_directory, owner.st_uid, owner.st_gid);
+
 	char fname[1024];
 	struct tm * timeinfo;
 	struct timeval now;
 	gettimeofday(&now, NULL);
 	timeinfo = localtime((time_t *)&now.tv_sec);
-	strftime(fname,1024,"/tmp/screenshot_%F_%H_%M_%S.tga",timeinfo);
+	char timestamp[64];
+	strftime(timestamp, sizeof(timestamp), "Screenshot-%F-%H-%M-%S.png", timeinfo);
+	snprintf(fname, sizeof(fname), "%s/%s", screenshot_directory, timestamp);
 
 	FILE * f = fopen(fname, "we");
 	if (!f) {
@@ -1060,13 +1083,20 @@ static void yutani_screenshot(yutani_globals_t * yg) {
 		return;
 	}
 
-	gfx_buffer_write(f, ctx, flags);
-	fclose(f);
+	int write_error = gfx_buffer_write(f, ctx, flags);
+	if (fclose(f) || write_error) {
+		TRACE("Error writing PNG screenshot '%s'.", fname);
+		unlink(fname);
+		return;
+	}
+	if (!stat(screenshot_directory, &owner)) chown(fname, owner.st_uid, owner.st_gid);
 
 
 	FILE * toast = fopen("/dev/pex/toast", "we");
-	fprintf(toast, "{\"icon\": \"%s\", \"body\": \"Screenshot taken.\"}", fname);
-	fclose(toast);
+	if (toast) {
+		fprintf(toast, "{\"icon\": \"%s\", \"body\": \"Saved %s\"}", fname, fname);
+		fclose(toast);
+	}
 
 	/* Blorp */
 	system("play /usr/share/ttk/blorp.wav &");

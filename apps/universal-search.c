@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -53,6 +54,22 @@ static razion_search_stats_t search_stats;
 static int running = 1;
 static size_t recents[5];
 static size_t recent_count;
+
+static const char * searchable_query(const char * input) {
+	static const char * prefixes[] = {
+		"open ", "launch ", "search ", "find ", "show ", "go to ",
+	};
+	while (*input && isspace((unsigned char)*input)) input++;
+	for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); ++i) {
+		size_t length = strlen(prefixes[i]);
+		if (!strncasecmp(input, prefixes[i], length)) {
+			input += length;
+			while (*input && isspace((unsigned char)*input)) input++;
+			break;
+		}
+	}
+	return input;
+}
 
 static void copy_string(char * destination, size_t size, const char * source) {
 	if (!size) return;
@@ -121,6 +138,9 @@ static void load_catalogue(void) {
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Desktop Companion",
 		"Choose, name, customize, and care for an offline desktop companion",
 		"/bin/razion-companion", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SETTING, "Privacy Center",
+		"Real device, filesystem, network, and AI policy status",
+		"/bin/razion-privacy", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Desktop Files",
 		"Open the Desktop folder", "/bin/file-browser", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "System Monitor",
@@ -133,6 +153,19 @@ static void load_catalogue(void) {
 		"Version, origin, and license information", "/bin/about", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Package Manager",
 		"Existing package management interface", "/bin/gsudo", "package-manager", NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Take Screenshot",
+		"Capture the full display to Pictures/Screenshots", "/bin/yutani-screenshot", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Screenshot Active Window",
+		"Capture the focused window to Pictures/Screenshots", "/bin/yutani-screenshot", "--window", NULL, NULL);
+
+	const char * home = getenv("HOME");
+	static char home_location[RAZION_SEARCH_TARGET_MAX];
+	if (home && *home) {
+		/* The collector indexes child folders; add only the root to avoid duplicate results. */
+		if (snprintf(home_location, sizeof(home_location), "%s", home) < (int)sizeof(home_location))
+			add_fixed(RAZION_SEARCH_KIND_DIRECTORY, "Home", "Open Home in File Manager",
+				"/bin/file-browser", home_location, NULL, NULL);
+	}
 	fixed_count = item_count;
 
 	const char * recent_home = getenv("HOME");
@@ -150,7 +183,6 @@ static void load_catalogue(void) {
 		}
 	}
 
-	const char * home = getenv("HOME");
 	if (home && *home) {
 		char * canonical = realpath(home, NULL);
 		if (canonical && strlen(canonical) < RAZION_SEARCH_TARGET_MAX) {
@@ -161,7 +193,7 @@ static void load_catalogue(void) {
 		free(canonical);
 	}
 
-	/* Fill in the only catalogue action whose target depends on HOME. */
+	/* Keep the legacy Desktop Files action pointed at the current user's home. */
 	static char desktop[RAZION_SEARCH_TARGET_MAX];
 	if (home && snprintf(desktop, sizeof(desktop), "%s/Desktop", home) > 0) {
 		for (size_t i = 0; i < fixed_count; ++i) {
@@ -183,7 +215,7 @@ static void rebuild_results(void) {
 			if (!duplicate) results[result_count++] = candidate;
 		}
 	} else {
-		result_count = razion_search_rank(items, item_count, query,
+		result_count = razion_search_rank(items, item_count, searchable_query(query),
 			results, RESULT_CAPACITY);
 	}
 	if (!result_count) selected = 0;
@@ -358,7 +390,7 @@ static void redraw(void) {
 static int run_text_query(const char * text) {
 	load_catalogue();
 	size_t found[32];
-	size_t count = razion_search_rank(items, item_count, text,
+	size_t count = razion_search_rank(items, item_count, searchable_query(text),
 		found, sizeof(found) / sizeof(found[0]));
 	for (size_t i = 0; i < count; ++i) {
 		razion_search_item_t * item = &items[found[i]];

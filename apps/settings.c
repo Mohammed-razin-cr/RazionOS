@@ -16,14 +16,14 @@
 
 #define WINDOW_WIDTH 760
 #define WINDOW_HEIGHT 500
-#define SECTION_COUNT 5
+#define SECTION_COUNT 6
 
 typedef struct {
 	int theme, accent;
 	int dock_position, dock_size, dock_autohide, dock_compact;
 } settings_state_t;
 
-static const char * section_names[] = {"Personalization", "Desktop", "System", "Razion AI", "About"};
+static const char * section_names[] = {"Personalization", "Desktop", "System", "Razion AI", "Privacy", "About"};
 static const char * accent_names[] = {"teal", "blue", "violet", "orange", "rose"};
 static const uint32_t accent_colors[] = {
 	0xFF29C4B4, 0xFF4A91F7, 0xFF9769F5, 0xFFEB9A48, 0xFFE25C84
@@ -208,6 +208,10 @@ static void redraw(void) {
 		const char * items[] = {"Open Razion Pulse", "AI Chat", "Provider Status"};
 		action_grid(x, top, "Razion AI", "Optional local-first AI through the official engine", 50, items, 3);
 		label(x, top + 246, 11, "No browsing data or files are sent without an explicit user action.", RAZION_TEXT_SECONDARY, 0);
+	} else if (section == 4) {
+		header(x, top, "Privacy", "Real system capability and AI policy status");
+		button(70, x, top + 112, 250, 46, "Open Privacy Center", 0);
+		label(x, top + 198, 11, "Unavailable permission brokers are reported explicitly, never simulated.", RAZION_TEXT_SECONDARY, 0);
 	} else {
 		header(x, top, "About RazionOS", "AI-native operating system");
 		label(x, top + 126, 32, "R", RAZION_ACCENT, 1);
@@ -241,12 +245,14 @@ static int hit_test(int x, int y) {
 		int count = section == 2 ? 4 : 3, first = section == 2 ? 40 : 50;
 		for (int i = 0; i < count; ++i) { int bx=mx+(i%2)*220, by=top+112+(i/2)*62;
 			if (x>=bx && x<bx+204 && y>=by && y<by+46) return first+i; }
+	} else if (section == 4) {
+		if (x>=mx && x<mx+250 && y>=top+112 && y<top+158) return 70;
 	} else if (x>=mx && x<mx+230 && y>=top+182 && y<top+224) return 60;
 	return -1;
 }
 
 static void activate(int id) {
-	if (id >= 100 && id < 105) { section = id - 100; return; }
+	if (id >= 100 && id < 106) { section = id - 100; return; }
 	if (id >= 1 && id <= 3) { state.theme=id-1; if (!write_theme()) snprintf(status,sizeof(status),"Theme saved. Reopen applications to apply it."); }
 	else if (id >= 10 && id < 15) { state.accent=id-10; if (!write_theme()) snprintf(status,sizeof(status),"Accent saved. Reopen applications to apply it."); }
 	else if (id == 20) launch("/bin/wallpaper-picker",NULL,NULL);
@@ -262,6 +268,7 @@ static void activate(int id) {
 	else if (id == 50) launch("/bin/terminal","pulse",NULL);
 	else if (id == 51) launch("/bin/terminal","razion-chat",NULL);
 	else if (id == 52) launch("/bin/terminal","razion-ai-status","providers");
+	else if (id == 70) launch("/bin/razion-privacy",NULL,NULL);
 	else if (id == 60) launch("/bin/terminal","sysinfo",NULL);
 }
 
