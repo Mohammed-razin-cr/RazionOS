@@ -36,6 +36,7 @@ extern void pipe_destroy(fs_node_t * node);
 #include <sys/ioctl.h>
 
 #define MAX_PACKET_SIZE 1024
+#define PEX_EXECUTABLE_MAX 256
 #define debug_print(x, ...) do { if (0) {printf("packetfs.c [%s] ", #x); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
 typedef struct packet_manager {
@@ -56,11 +57,19 @@ typedef struct packet_exchange {
 typedef struct packet_client {
 	pex_ex_t * parent;
 	fs_node_t * pipe;
+	pid_t pid;
+	uid_t uid;
+	gid_t gid;
+	char executable[PEX_EXECUTABLE_MAX];
 } pex_client_t;
 
 
 typedef struct packet {
 	pex_client_t * source;
+	pid_t       pid;
+	uid_t       uid;
+	gid_t       gid;
+	char        executable[PEX_EXECUTABLE_MAX];
 	size_t      size;
 	uint8_t     data[];
 } packet_t;
@@ -89,6 +98,10 @@ static void send_to_server(pex_ex_t * p, pex_client_t * c, size_t size, void * d
 	}
 
 	packet->source = c;
+	packet->pid = c->pid;
+	packet->uid = c->uid;
+	packet->gid = c->gid;
+	memcpy(packet->executable, c->executable, sizeof(packet->executable));
 	packet->size = size;
 
 	if (size) {
@@ -114,6 +127,10 @@ static int send_to_client(pex_ex_t * p, pex_client_t * c, size_t size, void * da
 
 	memcpy(packet->data, data, size);
 	packet->source = NULL;
+	packet->pid = 0;
+	packet->uid = 0;
+	packet->gid = 0;
+	packet->executable[0] = '\0';
 	packet->size = size;
 
 	write_fs(c->pipe, 0, sizeof(struct packet*), (uint8_t*)&packet);
@@ -125,6 +142,18 @@ static pex_client_t * create_client(pex_ex_t * p) {
 	pex_client_t * out = malloc(sizeof(pex_client_t));
 	out->parent = p;
 	out->pipe = make_pipe(4096);
+	out->pid = this_core->current_process->id;
+	out->uid = this_core->current_process->user;
+	out->gid = this_core->current_process->user_group;
+	/* process->name is the resolved executable image path. argv[0] is caller
+	 * controlled and may contain only a shell command name. */
+	const char * executable = this_core->current_process->name;
+	size_t executable_length = strlen(executable);
+	if (executable_length >= sizeof(out->executable)) {
+		executable_length = sizeof(out->executable) - 1;
+	}
+	memcpy(out->executable, executable, executable_length);
+	out->executable[executable_length] = '\0';
 	return out;
 }
 

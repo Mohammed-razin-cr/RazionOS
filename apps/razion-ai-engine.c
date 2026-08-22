@@ -25,6 +25,7 @@
 #include <toaru/pex.h>
 #include <toaru/razion_ai.h>
 #include <toaru/razion_ai_provider.h>
+#include <toaru/razion_permissions.h>
 
 #define ENGINE_CONFIG "/etc/razion-ai.conf"
 #define DEFAULT_AUDIT_LOG "/var/log/razion-ai.log"
@@ -758,6 +759,10 @@ static int run_engine(void) {
 			}
 			set_response(&response, &invalid, RAZION_AI_STATUS_PROTOCOL_ERROR,
 				"engine", "Invalid Razion AI protocol request.");
+		} else if (!razion_permission_policy_allows(NULL,
+			packet->executable, RAZION_CAP_AI)) {
+			set_response(&response, request, RAZION_AI_STATUS_PERMISSION_DENIED,
+				"engine", "The calling executable is not allowed to use Razion AI.");
 		} else {
 			handle_request(request, &response);
 			audit_request(packet->source, request, &response);

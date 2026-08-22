@@ -52,9 +52,12 @@ FILE * pex_connect(char * target) {
 	char tmp[100];
 	if (strlen(target) > 80) return NULL;
 	sprintf(tmp, "/dev/pex/%s", target);
-	FILE * out = fopen(tmp, "re+");
+	int fd = open(tmp, O_RDWR | O_CLOEXEC);
+	FILE * out = fd < 0 ? NULL : fdopen(fd, "r+");
 	if (out) {
 		setbuf(out, NULL);
+	} else if (fd >= 0) {
+		close(fd);
 	}
 	return out;
 }

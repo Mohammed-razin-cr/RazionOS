@@ -86,7 +86,12 @@ CRTS  = $(BASE)/lib/crt0.o $(BASE)/lib/Scrt0.o $(BASE)/lib/crti.o $(BASE)/lib/cr
 
 LC = $(BASE)/lib/libc.so $(GCC_SHARED)
 
-.PHONY: all system clean run shell
+.PHONY: all system clean run shell persistent-home
+
+# Creates an opt-in writable data disk. This target never overwrites an
+# existing image, because that image may contain the user's durable data.
+persistent-home:
+	bash util/mkpersistent-home.sh razion-home.img 512
 
 misaka-kernel: ${KERNEL_ASMOBJS} ${KERNEL_OBJS} kernel/arch/${ARCH}/link.ld
 	${CC} -g -T kernel/arch/${ARCH}/link.ld ${KERNEL_CFLAGS} ${ARCH_KERNEL_LINK_FLAGS} -o $@.64 ${KERNEL_ASMOBJS} ${KERNEL_OBJS}

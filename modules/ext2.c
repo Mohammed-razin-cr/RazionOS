@@ -1608,7 +1608,9 @@ static int ext2_root(ext2_fs_t * this, ext2_inodetable_t *inode, fs_node_t *fnod
 	fnode->close   = close_ext2;
 	fnode->readdir = readdir_ext2;
 	fnode->finddir = finddir_ext2;
-	fnode->ioctl   = NULL;
+	/* Directory descriptors must forward IOCTLSYNC to the backing block
+	 * device. The sync utility opens the current directory by design. */
+	fnode->ioctl   = ioctl_ext2;
 	fnode->create  = create_ext2;
 	fnode->mkdir   = mkdir_ext2;
 	fnode->unlink  = unlink_ext2;
@@ -1746,4 +1748,3 @@ struct Module metadata = {
 	.init = init,
 	.fini = fini,
 };
-

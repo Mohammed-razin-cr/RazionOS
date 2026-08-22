@@ -3,11 +3,18 @@
 #include <_cheader.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/types.h>
 
 _Begin_C_Header
 
+#define PEX_EXECUTABLE_MAX 256
+
 typedef struct pex_packet {
 	uintptr_t source;
+	pid_t       pid;
+	uid_t       uid;
+	gid_t       gid;
+	char        executable[PEX_EXECUTABLE_MAX];
 	size_t      size;
 	uint8_t     data[];
 } pex_packet_t;

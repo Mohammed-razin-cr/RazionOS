@@ -43,6 +43,7 @@ class Classifier:
 		'<toaru/razion_companion.h>':(None, '-ltoaru_razion_companion',[]),
 		'<toaru/rzpkg.h>':        (None, '-ltoaru_rzpkg',        []),
 		'<toaru/razion_recorder.h>':(None, '-ltoaru_razion_recorder',['<toaru/graphics.h>']),
+		'<toaru/razion_permissions.h>':(None, '-ltoaru_razion_permissions',['<toaru/pex.h>']),
         # Kuroko
         '<kuroko/kuroko.h>':     ('../../../kuroko/src', '-lkuroko', []),
     }

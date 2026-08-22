@@ -47,6 +47,13 @@ system: image.iso
 run: system
 	${EMU} ${EMU_ARGS} -cdrom image.iso
 
+run-persistent: system razion-home.img
+	${EMU} ${EMU_ARGS} -cdrom image.iso \
+		-drive file=razion-home.img,format=raw,if=ide
+
+razion-home.img:
+	bash util/mkpersistent-home.sh $@ 512
+
 fast: system
 	${EMU} ${EMU_ARGS} -cdrom image.iso \
 		-fw_cfg name=opt/org.toaruos.bootmode,string=normal \

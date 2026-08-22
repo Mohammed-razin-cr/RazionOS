@@ -206,6 +206,7 @@ static void ata_device_read_sector(struct ata_device * dev, uint64_t lba, uint8_
 static void ata_device_read_sector_atapi(struct ata_device * dev, uint64_t lba, uint8_t * buf);
 static void ata_device_write_sector(struct ata_device * dev, uint64_t lba, uint8_t * buf);
 static void ata_device_write_sector_actual(struct ata_device * dev, uint64_t lba);
+static int ata_wait(struct ata_device * dev, int advanced);
 
 struct CacheEntry {
 	struct ata_device * dev;
@@ -369,6 +370,7 @@ static ssize_t write_ata(fs_node_t *node, off_t offset, size_t size, uint8_t *bu
 
 	if (offset % ATA_CACHE_SIZE) {
 		unsigned int prefix_size = (ATA_CACHE_SIZE - (offset % ATA_CACHE_SIZE));
+		if (prefix_size > size) prefix_size = size;
 
 		char * tmp = malloc(ATA_CACHE_SIZE);
 		ata_device_read_sector(dev, start_block, (uint8_t *)tmp);
@@ -425,6 +427,16 @@ static int ioctl_ata(fs_node_t * node, unsigned long request, void * argp) {
 					ata_device_write_sector_actual(cache_entries[i].dev, cache_entries[i].lba);
 					cache_entries[i].flags = 0;
 				}
+			}
+			/* Software cache eviction only submits DMA writes. Explicitly flush
+			 * the drive's volatile write cache before reporting durability. */
+			outportb(dev->control, 0x02);
+			outportb(dev->io_base + ATA_REG_HDDEVSEL, 0xe0 | dev->slave << 4);
+			ata_wait(dev, 0);
+			outportb(dev->io_base + ATA_REG_COMMAND, ATA_CMD_CACHE_FLUSH_EXT);
+			if (ata_wait(dev, 0)) {
+				mutex_release(ata_mutex);
+				return -EIO;
 			}
 			mutex_release(ata_mutex);
 			return 0;
@@ -1070,4 +1082,3 @@ struct Module metadata = {
 	.init = ata_initialize,
 	.fini = ata_finalize,
 };
-

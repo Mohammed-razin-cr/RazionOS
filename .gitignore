@@ -49,6 +49,8 @@ CMakeCache.txt
 /cdrom
 /fatbase
 /image.iso
+/razion-home*.img
+/razion-home*.vdi
 /boot/mbr.sys
 /bootstub
 /.arch
