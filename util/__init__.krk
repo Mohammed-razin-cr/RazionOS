@@ -375,5 +375,7 @@ def parse_version():
                     l = l.strip()
                     version[v] = l
 
-    return version.values()
-
+    # Kuroko's dictionary implementation does not expose Python's values()
+    # helper. Preserve the declared semantic order explicitly instead of
+    # depending on dictionary iteration order.
+    return tuple(version[v] for v in version_syms)

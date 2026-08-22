@@ -152,6 +152,10 @@ clean:
 	-rm -f ${KERNEL_OBJS} $(MODULES)
 	-rm -f misaka-kernel misaka-kernel.64
 	-rm -f ramdisk.tar ramdisk.igz 
+	-rm -f image.iso image.dat
+	-rm -f cdrom/fat.img cdrom/boot.sys
+	-rm -f fatbase/kernel fatbase/ramdisk.igz fatbase/efi/boot/bootx64.efi
+	-rm -f boot/mbr.o boot/mbr.sys boot/efi64.so
 	-rm -f $(APPS_Y) $(LIBS_Y) $(KRK_MODS_Y) $(KRK_MODS) $(TESTS_Y)
 	-rm -f $(APPS_X) $(PROVIDER_APPS_X) $(LIBS_X) $(KRK_MODS_X) $(APPS_KRK_X) $(APPS_SH_X) $(TESTS_X)
 	-rm -f $(BIM_FILES) $(BASE)/bin/bim

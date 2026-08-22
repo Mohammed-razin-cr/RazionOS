@@ -179,8 +179,11 @@ razion_pulse_status_t razion_pulse_propose(
 	} else if (has(normalized, "open") &&
 		(has(normalized, "file browser") || has(normalized, "file manager"))) {
 		action_id = "open-file-browser";
-	} else if (has(normalized, "open") &&
+	} else if ((has(normalized, "open") || has(normalized, "show")) &&
 		(has(normalized, "system monitor") || has(normalized, "task manager"))) {
+		action_id = "open-system-monitor";
+	} else if ((has(normalized, "show") || has(normalized, "check")) &&
+		(has(normalized, "system information") || has(normalized, "system status"))) {
 		action_id = "open-system-monitor";
 	} else if (has(normalized, "open") &&
 		(has(normalized, "settings") || has(normalized, "preferences"))) {

@@ -1897,7 +1897,7 @@ static void handle_key_event(yutani_globals_t * yg, struct yutani_msg_key_event 
 			}
 		}
 		if ((ke->event.action == KEY_ACTION_DOWN) &&
-			(ke->event.modifiers & KEY_MOD_LEFT_ALT) &&
+			(ke->event.modifiers & (KEY_MOD_LEFT_ALT | KEY_MOD_RIGHT_ALT)) &&
 			(ke->event.keycode == KEY_F4)) {
 			if (focused->z != YUTANI_ZORDER_BOTTOM && focused->z != YUTANI_ZORDER_TOP) {
 				yutani_msg_buildx_window_close_alloc(response);

@@ -63,7 +63,7 @@ void razion_companion_defaults(
 	time_t now) {
 	memset(config, 0, sizeof(*config));
 	memset(state, 0, sizeof(*state));
-	config->enabled = 0;
+	config->enabled = 1;
 	config->hidden = 0;
 	config->species = 0;
 	copy_name(config->name, "Nova");

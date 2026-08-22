@@ -45,7 +45,7 @@ static const dock_app_t apps[APP_COUNT] = {
 	{"Store", "razion-store", "/bin/razion-store", NULL, "Razion Store"},
 	{"Terminal", "razion-terminal", "/bin/terminal", NULL, "Terminal"},
 	{"Settings", "razion-settings", "/bin/settings", NULL, "RazionOS Settings"},
-	{"Pulse", "razion-pulse", "/bin/terminal", "razion-chat", "Razion AI Chat"},
+	{"Pulse", "razion-pulse", "/bin/terminal", "pulse", "Razion Pulse"},
 	{"Monitor", "razion-monitor", "/bin/cpuwidget", NULL, "System Monitor"},
 	{"Notes", "razion-notes", "/bin/razion-notes", NULL, "Razion Notes"},
 	{"Calendar", "razion-calendar", "/bin/razion-calendar", NULL, "Razion Calendar"},

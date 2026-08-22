@@ -14,7 +14,6 @@ exec file-browser,razion-files,File Browser
 exec universal-search,razion-launcher,Razion Launcher
 exec razion-companion,star,Desktop Companion
 exec razion-store,razion-store,Razion Store
-exec ripper,razion-ripper,Ripper
 exec razion-notes,razion-notes,Razion Notes
 exec razion-calendar,razion-calendar,Razion Calendar
 exec razion-media,razion-media,Razion Media Player
