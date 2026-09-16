@@ -212,13 +212,14 @@ static void redraw(void) {
 	if (section == 0) personalization(x, top);
 	else if (section == 1) desktop(x, top);
 	else if (section == 2) {
-		const char * items[] = {"Quick Settings", "System Monitor", "File Manager", "Terminal"};
-		action_grid(x, top, "System", "Working native system tools", 40, items, 4);
-		label(x, top + 274, 11, "Only controls backed by current hardware and services are exposed.", RAZION_TEXT_SECONDARY, 0);
+		const char * items[] = {"Quick Settings", "System Center", "File Manager", "Terminal",
+			"Updates", "Screenshots", "Lock Screen", "System Monitor"};
+		action_grid(x, top, "System", "Storage, updates, capture, lock, and native tools", 40, items, 8);
+		label(x, top + 398, 11, "Only controls backed by current hardware and services are exposed.", RAZION_TEXT_SECONDARY, 0);
 	} else if (section == 3) {
-		const char * items[] = {"Open Razion Pulse", "AI Chat", "Provider Status"};
-		action_grid(x, top, "Razion AI", "Optional local-first AI through the official engine", 50, items, 3);
-		label(x, top + 246, 11, "No browsing data or files are sent without an explicit user action.", RAZION_TEXT_SECONDARY, 0);
+		const char * items[] = {"Assistant Panel", "AI File Search", "Open Razion Pulse", "AI Chat", "Provider Status"};
+		action_grid(x, top, "Razion AI", "Optional local-first AI through the official engine", 50, items, 5);
+		label(x, top + 322, 11, "No browsing data or files are sent without an explicit user action.", RAZION_TEXT_SECONDARY, 0);
 	} else if (section == 4) {
 		header(x, top, "Privacy", "Real system capability and AI policy status");
 		button(70, x, top + 112, 250, 46, "Open Privacy Center", 0);
@@ -253,7 +254,7 @@ static int hit_test(int x, int y) {
 		if (x >= mx && x < mx+390 && y >= top+304 && y < top+352) return 36;
 		if (x >= mx && x < mx+230 && y >= top+382 && y < top+424) return 37;
 	} else if (section == 2 || section == 3) {
-		int count = section == 2 ? 4 : 3, first = section == 2 ? 40 : 50;
+		int count = section == 2 ? 8 : 5, first = section == 2 ? 40 : 50;
 		for (int i = 0; i < count; ++i) { int bx=mx+(i%2)*220, by=top+112+(i/2)*62;
 			if (x>=bx && x<bx+204 && y>=by && y<by+46) return first+i; }
 	} else if (section == 4) {
@@ -273,9 +274,9 @@ static int focusable_controls(int * ids, int capacity) {
 	} else if (section == 1) {
 		for (int id = 30; id <= 37; ++id) ADD_FOCUS(id);
 	} else if (section == 2) {
-		for (int id = 40; id <= 43; ++id) ADD_FOCUS(id);
+		for (int id = 40; id <= 47; ++id) ADD_FOCUS(id);
 	} else if (section == 3) {
-		for (int id = 50; id <= 52; ++id) ADD_FOCUS(id);
+		for (int id = 50; id <= 54; ++id) ADD_FOCUS(id);
 	} else if (section == 4) {
 		ADD_FOCUS(70);
 	} else {
@@ -321,12 +322,18 @@ static void activate(int id) {
 	else if (id == 36) { state.dock_compact=!state.dock_compact; write_desktop(); }
 	else if (id == 37) launch("/bin/universal-search",NULL,NULL);
 	else if (id == 40) launch("/bin/quick-settings",NULL,NULL);
-	else if (id == 41) launch("/bin/cpuwidget",NULL,NULL);
+	else if (id == 41) launch("/bin/razion-system-center",NULL,NULL);
 	else if (id == 42) launch("/bin/file-browser",NULL,NULL);
 	else if (id == 43) launch("/bin/terminal",NULL,NULL);
-	else if (id == 50) launch("/bin/terminal","pulse",NULL);
-	else if (id == 51) launch("/bin/terminal","razion-chat",NULL);
-	else if (id == 52) launch("/bin/terminal","razion-ai-status","providers");
+	else if (id == 44) launch("/bin/razion-system-center",NULL,NULL);
+	else if (id == 45) launch("/bin/razion-system-center",NULL,NULL);
+	else if (id == 46) launch("/bin/razion-lock",NULL,NULL);
+	else if (id == 47) launch("/bin/cpuwidget",NULL,NULL);
+	else if (id == 50) launch("/bin/razion-assistant",NULL,NULL);
+	else if (id == 51) launch("/bin/razion-assistant","--files",NULL);
+	else if (id == 52) launch("/bin/terminal","pulse",NULL);
+	else if (id == 53) launch("/bin/terminal","razion-chat",NULL);
+	else if (id == 54) launch("/bin/terminal","razion-ai-status","providers");
 	else if (id == 70) launch("/bin/razion-privacy",NULL,NULL);
 	else if (id == 60) launch("/bin/terminal","sysinfo",NULL);
 }

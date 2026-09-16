@@ -54,6 +54,7 @@ static razion_search_stats_t search_stats;
 static int running = 1;
 static size_t recents[5];
 static size_t recent_count;
+static const char * initial_query;
 
 static const char * searchable_query(const char * input) {
 	static const char * prefixes[] = {
@@ -113,6 +114,12 @@ static void load_catalogue(void) {
 		"Natural-language system interface", "/bin/terminal", "pulse", NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion AI Chat",
 		"Optional provider-independent AI client", "/bin/terminal", "razion-chat", NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Assistant",
+		"Native AI panel for chat, safe actions, and local-first file search",
+		"/bin/razion-assistant", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "AI File Search",
+		"Ask AI to help find local files, then fall back to offline launcher search",
+		"/bin/razion-assistant", "--files", NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Help Browser",
 		"Local system documentation", "/bin/help-browser", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Store",
@@ -135,6 +142,9 @@ static void load_catalogue(void) {
 		"Implemented appearance, desktop, system, and AI controls", "/bin/settings", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Quick Settings",
 		"Network, audio, appearance, notifications, and power", "/bin/quick-settings", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SETTING, "System Center",
+		"Persistent storage, updates, notifications, screenshots, lock screen, and boot status",
+		"/bin/razion-system-center", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Wallpaper",
 		"Choose wallpaper and placement", "/bin/wallpaper-picker", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Desktop Companion",
@@ -162,6 +172,14 @@ static void load_catalogue(void) {
 	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Select Screenshot Region",
 		"Drag over a display region and save it to Pictures/Screenshots",
 		"/bin/yutani-screenshot", "--select", NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Lock Screen",
+		"Show the RazionOS session lock overlay", "/bin/razion-lock", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Updates",
+		"Open local milestone and update status", "/bin/razion-system-center", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Persistent Storage",
+		"Check durable home storage status", "/bin/razion-system-center", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Notifications",
+		"Toggle Do Not Disturb or send a test toast", "/bin/razion-system-center", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SYSTEM_TOOL, "Start Screen Recording",
 		"Record the display to Videos/Recordings (30 second limit)",
 		"/bin/razion-recorder", "start", NULL, NULL);
@@ -424,16 +442,21 @@ int main(int argc, char * argv[]) {
 		return run_text_query(argv[2]);
 	}
 	if (argc == 2 && !strcmp(argv[1], "--help")) {
-		puts("usage: universal-search [--query text | --recent-pdf]");
+		puts("usage: universal-search [--query text | --initial text | --recent-pdf]");
 		return 0;
 	}
-	if (argc > 1 && strcmp(argv[1], "--recent-pdf")) {
+	if (argc == 3 && !strcmp(argv[1], "--initial")) {
+		initial_query = argv[2];
+	} else if (argc > 1 && strcmp(argv[1], "--recent-pdf")) {
 		fprintf(stderr, "universal-search: unknown option: %s\n", argv[1]);
 		return 2;
 	}
 
 	load_catalogue();
-	if (argc == 2) {
+	if (initial_query) {
+		copy_string(query, sizeof(query), initial_query);
+		query_length = strlen(query);
+	} else if (argc == 2) {
 		copy_string(query, sizeof(query), "pdf");
 		query_length = strlen(query);
 	}

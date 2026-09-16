@@ -102,8 +102,8 @@ static void redraw(void) {
 	card(11,x+228,top+88,212,70,"Audio",volume,mixer>=0,mixer>=0);
 	card(12,x,top+174,212,70,"Appearance",theme_light?"Light theme":"Dark theme",1,1);
 	card(13,x+228,top+174,212,70,"Do Not Disturb",dnd?"Notifications paused":"Notifications enabled",1,1);
-	card(14,x,top+260,212,70,"Settings","Open full settings",1,1);
-	card(15,x+228,top+260,212,70,"Power","Privileged restart",1,1);
+	card(14,x,top+260,212,70,"System Center","Storage, updates, capture",1,1);
+	card(15,x+228,top+260,212,70,"Lock","Lock this session",1,1);
 	label(x,window->height-b.bottom_height-24,10,"Tab/Arrows navigate  •  Enter activates  •  unavailable controls stay disabled",RAZION_TEXT_SECONDARY,0);
 	render_decorations(window,ctx,"Razion Quick Settings"); flip(ctx); yutani_flip(yctx,window);
 }
@@ -128,8 +128,8 @@ static void activate(int id) {
 	if (id==11 && mixer>=0) set_volume(10);
 	else if (id==12) { theme_light=!theme_light; write_theme(); }
 	else if (id==13) { dnd=!dnd; write_dnd(); }
-	else if (id==14) launch("/bin/settings",NULL);
-	else if (id==15) launch("/bin/gsudo","reboot");
+	else if (id==14) launch("/bin/razion-system-center",NULL);
+	else if (id==15) launch("/bin/razion-lock",NULL);
 }
 
 int main(void) {

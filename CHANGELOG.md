@@ -21,6 +21,14 @@ All notable RazionOS milestone changes are recorded here.
 - Faster game UX pass: Snake launches movement on the first direction key,
   Tiles explains blocked actions through status feedback, and Tic-Tac-Toe uses
   solved opening moves, immediate win/block checks, and alpha-beta pruning
+- Native Razion Assistant panel with chat mode, AI file-search mode, Pulse
+  handoff, provider-status handoff, and local Launcher fallback
+- Razion System Center for persistent-storage status, milestone update status,
+  notification controls, screenshot actions, lock screen, About, boot status,
+  and system information entry points
+- Discoverable lock-screen overlay, System Center, Assistant, AI file search,
+  update status, notification status, and screenshot actions in Settings,
+  Launcher, Quick Settings, and the panel menu
 - Modern File Manager operations: create, rename, copy, cut, paste, safe and
   permanent deletion, properties, current-folder search, sorting, multiple
   selection, context menus, keyboard shortcuts, and same-window folder drag

@@ -17,6 +17,7 @@ exec razion-store,razion-store,Razion Store
 exec razion-notes,razion-notes,Razion Notes
 exec razion-calendar,razion-calendar,Razion Calendar
 exec razion-media,razion-media,Razion Media Player
+exec razion-assistant,razion-pulse,Razion Assistant
 exec terminal pulse,razion-pulse,Razion Pulse
 exec terminal razion-chat,razion-pulse,Razion AI Chat
 exec terminal,razion-terminal,Terminal
@@ -35,7 +36,9 @@ exec ripper,razion-ripper,Ripper
 :system
 exec settings,razion-settings,Settings
 exec quick-settings,razion-settings,Quick Settings
+exec razion-system-center,razion-settings,System Center
 exec terminal sysinfo,razion-monitor,System Information
+exec razion-lock,razion-settings,Lock Screen
 exec gsudo package-manager,package,Package Manager
 exec wallpaper-picker,wallpaper-picker,Select Wallpaper
 exec cpuwidget,razion-monitor,System Monitor
