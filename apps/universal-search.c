@@ -126,9 +126,11 @@ static void load_catalogue(void) {
 	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Media Player",
 		"Native low-overhead PCM playback", "/bin/razion-media", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Snake",
-		"Native arcade game with keyboard controls", "/bin/razion-snake", NULL, NULL, NULL);
+		"Native arcade game with adaptive speed and pause", "/bin/razion-snake", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Tiles",
-		"Native 2048-style number puzzle", "/bin/razion-tiles", NULL, NULL, NULL);
+		"Native 2048-style puzzle with undo", "/bin/razion-tiles", NULL, NULL, NULL);
+	add_fixed(RAZION_SEARCH_KIND_APPLICATION, "Razion Tic-Tac-Toe",
+		"Native strategy game against the computer", "/bin/razion-tictactoe", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Settings",
 		"Implemented appearance, desktop, system, and AI controls", "/bin/settings", NULL, NULL, NULL);
 	add_fixed(RAZION_SEARCH_KIND_SETTING, "Quick Settings",

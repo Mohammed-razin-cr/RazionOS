@@ -33,8 +33,8 @@ static yutani_window_t * window;
 static gfx_context_t * ctx;
 static struct TT_Font * font, * bold;
 static settings_state_t state;
-static int section, hover_id = -1, pressed_id = -1, running = 1;
-static char status[128] = "Settings are stored for this user.";
+static int section, hover_id = -1, pressed_id = -1, focus_id = 100, running = 1;
+static char status[128] = "Tab or Arrow keys navigate. Enter activates a control.";
 
 static int clamp(int value, int low, int high) { return value < low ? low : value > high ? high : value; }
 
@@ -122,6 +122,8 @@ static void label(int x, int y, int size, const char * text, uint32_t color, int
 
 static void button(int id, int x, int y, int width, int height, const char * text, int selected) {
 	uint32_t fill = selected || id == pressed_id ? RAZION_SELECTION : id == hover_id ? RAZION_SURFACE_HOVER : RAZION_SURFACE_SECONDARY;
+	if (id == focus_id && window->focused)
+		draw_rounded_rectangle(ctx, x - 2, y - 2, width + 4, height + 4, 9, RAZION_FOCUS);
 	draw_rounded_rectangle(ctx, x, y, width, height, 7, fill);
 	draw_rectangle_solid(ctx, x + 8, y + height - 1, width - 16, 1, selected ? RAZION_ACCENT : RAZION_BORDER);
 	tt_set_size(font, 13);
@@ -130,6 +132,10 @@ static void button(int id, int x, int y, int width, int height, const char * tex
 }
 
 static void toggle(int id, int x, int y, const char * title, const char * detail, int enabled) {
+	if (id == focus_id && window->focused)
+		draw_rounded_rectangle(ctx, x - 2, y - 2, 392, 50, 8, RAZION_FOCUS);
+	draw_rounded_rectangle(ctx, x, y, 388, 46, 6,
+		id == pressed_id ? RAZION_SELECTION : id == hover_id ? RAZION_SURFACE_HOVER : RAZION_BACKGROUND);
 	label(x, y + 18, 14, title, RAZION_TEXT_PRIMARY, 1);
 	label(x, y + 38, 11, detail, RAZION_TEXT_SECONDARY, 0);
 	draw_rounded_rectangle(ctx, x + 340, y + 7, 46, 24, 12, enabled ? RAZION_ACCENT : RAZION_SURFACE_HOVER);
@@ -152,6 +158,8 @@ static void personalization(int x, int top) {
 	label(x, top + 202, 13, "Accent", RAZION_TEXT_SECONDARY, 1);
 	for (int i = 0; i < 5; ++i) {
 		int sx = x + i * 50;
+		if (focus_id == 10 + i && window->focused)
+			draw_rounded_rectangle(ctx, sx - 6, top + 214, 40, 40, 20, RAZION_FOCUS);
 		if (state.accent == i) draw_rounded_rectangle(ctx, sx - 4, top + 216, 36, 36, 18, RAZION_TEXT_PRIMARY);
 		draw_rounded_rectangle(ctx, sx, top + 220, 28, 28, 14, accent_colors[i]);
 	}
@@ -191,6 +199,9 @@ static void redraw(void) {
 	label(bounds.left_width + 24, top + 62, 10, "SYSTEM SETTINGS", RAZION_TEXT_SECONDARY, 1);
 	for (int i = 0; i < SECTION_COUNT; ++i) {
 		int y = top + 91 + i * 48;
+		if (focus_id == 100 + i && window->focused)
+			draw_rounded_rectangle(ctx, bounds.left_width + 10, y - 2,
+				sidebar - 20, 42, 8, RAZION_FOCUS);
 		if (section == i || hover_id == 100 + i) draw_rounded_rectangle(ctx, bounds.left_width + 12, y,
 			sidebar - 24, 38, 6, section == i ? RAZION_SELECTION : RAZION_SURFACE_HOVER);
 		if (section == i) draw_rounded_rectangle(ctx, bounds.left_width + 12, y + 8, 3, 22, 2, RAZION_ACCENT);
@@ -251,6 +262,54 @@ static int hit_test(int x, int y) {
 	return -1;
 }
 
+static int focusable_controls(int * ids, int capacity) {
+	int count = 0;
+#define ADD_FOCUS(value) do { if (count < capacity) ids[count++] = (value); } while (0)
+	for (int i = 0; i < SECTION_COUNT; ++i) ADD_FOCUS(100 + i);
+	if (section == 0) {
+		for (int id = 1; id <= 3; ++id) ADD_FOCUS(id);
+		for (int id = 10; id <= 14; ++id) ADD_FOCUS(id);
+		ADD_FOCUS(20);
+	} else if (section == 1) {
+		for (int id = 30; id <= 37; ++id) ADD_FOCUS(id);
+	} else if (section == 2) {
+		for (int id = 40; id <= 43; ++id) ADD_FOCUS(id);
+	} else if (section == 3) {
+		for (int id = 50; id <= 52; ++id) ADD_FOCUS(id);
+	} else if (section == 4) {
+		ADD_FOCUS(70);
+	} else {
+		ADD_FOCUS(60);
+	}
+#undef ADD_FOCUS
+	return count;
+}
+
+static void move_focus(int direction) {
+	int ids[24];
+	int count = focusable_controls(ids, 24);
+	if (!count) return;
+	int current = 0;
+	for (int i = 0; i < count; ++i) {
+		if (ids[i] == focus_id) { current = i; break; }
+	}
+	current = (current + direction + count) % count;
+	focus_id = ids[current];
+}
+
+static void move_sidebar_focus(int direction) {
+	int current = focus_id >= 100 && focus_id < 100 + SECTION_COUNT ? focus_id - 100 : section;
+	current = (current + direction + SECTION_COUNT) % SECTION_COUNT;
+	focus_id = 100 + current;
+	section = current;
+}
+
+static void focus_first_section_control(void) {
+	int ids[24];
+	int count = focusable_controls(ids, 24);
+	if (count > SECTION_COUNT) focus_id = ids[SECTION_COUNT];
+}
+
 static void activate(int id) {
 	if (id >= 100 && id < 106) { section = id - 100; return; }
 	if (id >= 1 && id <= 3) { state.theme=id-1; if (!write_theme()) snprintf(status,sizeof(status),"Theme saved. Reopen applications to apply it."); }
@@ -291,15 +350,42 @@ int main(void) {
 		yutani_msg_t * message=yutani_poll(yctx); if (!message) continue;
 		switch (message->type) {
 			case YUTANI_MSG_KEY_EVENT: { struct yutani_msg_key_event * key=(void*)message->data;
-				if (key->wid==window->wid && key->event.action==KEY_ACTION_DOWN && key->event.keycode==KEY_ESCAPE) running=0;
+				if (key->wid != window->wid || key->event.action != KEY_ACTION_DOWN) break;
+				int changed = 0;
+				if (key->event.keycode == KEY_ESCAPE) running = 0;
+				else if (key->event.keycode == '\t') {
+					move_focus(key->event.modifiers & (KEY_MOD_LEFT_SHIFT | KEY_MOD_RIGHT_SHIFT) ? -1 : 1);
+					changed = 1;
+				} else if (key->event.keycode == KEY_ARROW_UP && focus_id >= 100) {
+					move_sidebar_focus(-1); changed = 1;
+				} else if (key->event.keycode == KEY_ARROW_DOWN && focus_id >= 100) {
+					move_sidebar_focus(1); changed = 1;
+				} else if (key->event.keycode == KEY_ARROW_UP) {
+					move_focus(-1); changed = 1;
+				} else if (key->event.keycode == KEY_ARROW_RIGHT && focus_id >= 100) {
+					focus_first_section_control(); changed = 1;
+				} else if (key->event.keycode == KEY_ARROW_LEFT && focus_id < 100) {
+					focus_id = 100 + section; changed = 1;
+				} else if (key->event.keycode == KEY_ARROW_LEFT) {
+					move_focus(-1); changed = 1;
+				} else if (key->event.keycode == KEY_ARROW_RIGHT || key->event.keycode == KEY_ARROW_DOWN) {
+					move_focus(1); changed = 1;
+				} else if ((key->event.key == '\n' || key->event.key == ' ') && focus_id >= 0) {
+					activate(focus_id); changed = 1;
+				}
+				if (changed) redraw();
 				break; }
 			case YUTANI_MSG_WINDOW_MOUSE_EVENT: { struct yutani_msg_window_mouse_event * mouse=(void*)message->data;
 				if (mouse->wid!=window->wid) break;
-				if (decor_handle_event(yctx,message)==DECOR_CLOSE) running=0;
-				int over=hit_test(mouse->new_x,mouse->new_y); if (mouse->command==YUTANI_MOUSE_EVENT_DOWN) pressed_id=over;
+				int decor = decor_handle_event(yctx,message);
+				if (decor==DECOR_CLOSE) running=0;
+				int old_hover = hover_id, old_pressed = pressed_id, activated = 0;
+				int over=hit_test(mouse->new_x,mouse->new_y); if (mouse->command==YUTANI_MOUSE_EVENT_DOWN) { pressed_id=over; if (over >= 0) focus_id=over; }
 				else if (mouse->command==YUTANI_MOUSE_EVENT_LEAVE) { hover_id=-1; pressed_id=-1; }
-				else if (mouse->command==YUTANI_MOUSE_EVENT_RAISE || mouse->command==YUTANI_MOUSE_EVENT_CLICK) { if (over>=0 && over==pressed_id) activate(over); pressed_id=-1; }
-				hover_id=over; redraw(); break; }
+				else if (mouse->command==YUTANI_MOUSE_EVENT_RAISE || mouse->command==YUTANI_MOUSE_EVENT_CLICK) { if (over>=0 && over==pressed_id) { activate(over); activated=1; } pressed_id=-1; }
+				hover_id=over;
+				if (decor == DECOR_REDRAW || old_hover != hover_id || old_pressed != pressed_id || activated) redraw();
+				break; }
 			case YUTANI_MSG_RESIZE_OFFER: { struct yutani_msg_window_resize * resize=(void*)message->data;
 				if (resize->wid==window->wid) resize_finish(resize->width,resize->height);
 				break; }

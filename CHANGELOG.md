@@ -6,6 +6,18 @@ All notable RazionOS milestone changes are recorded here.
 
 ### Added
 
+- Native isolated llama.cpp provider adapter using `/v1/models` health/model
+  discovery and `/v1/chat/completions` generation, with VirtualBox-host defaults,
+  bounded responses, timeouts, and AI Engine routing
+- Idempotent Windows-host llama.cpp launcher with loopback-only binding, loaded-
+  model readiness check, and a bounded 30-second Pulse AI-classification wait
+- Reliable executable permissions for every ramdisk startup hook, including
+  persistent home, the permission broker, and Razion AI services
+- Improved the native game suite: Snake now provides ready, pause, focus-pause,
+  adaptive-speed, best-score, WASD, and pointer states; Tiles now provides undo,
+  best score, WASD, pointer actions, and 2048/no-moves feedback
+- Razion Tic-Tac-Toe, a native pointer- and keyboard-accessible strategy game
+  with session scoring, cached minimax strategy, and state-change-only redraws
 - Modern File Manager operations: create, rename, copy, cut, paste, safe and
   permanent deletion, properties, current-folder search, sorting, multiple
   selection, context menus, keyboard shortcuts, and same-window folder drag
@@ -16,6 +28,13 @@ All notable RazionOS milestone changes are recorded here.
   desktop context access, and a native Settings application
 - Razion AI response cache, configurable retries, health statistics, async SDK
   begin/poll/cancel operations, Razion Chat, and Settings integration
+- State-change-only redraws and complete keyboard focus/navigation for Settings
+  and Quick Settings, with non-interactive hardware status cards excluded from
+  pointer and keyboard activation
+- Original Ripper browser chrome with compact tabs, vector navigation controls,
+  a location-aware address field, responsive new-tab surface, full keyboard
+  shortcuts/focus navigation, a focus-managed overflow menu, direct bookmark
+  control, cached network status, and state-change-only pointer repainting
 - Offline Universal Search across a reviewed application/settings/tool
   catalogue and bounded visible filename metadata under the user's home
 - Native `libtoaru_razion_search` ranking and collection API, Super+Space and
@@ -31,6 +50,8 @@ All notable RazionOS milestone changes are recorded here.
 - Clean x86_64 build and bootable BIOS/UEFI ISO generation
 - VirtualBox desktop boot, graphical folder creation, Recycle Bin move and
   restore, Settings launch, and graceful AI-provider-unavailable behavior
+- End-to-end llama.cpp provider health and chat in VirtualBox, AI-assisted Pulse
+  Downloads proposal and native folder launch, plus offline Pulse fallback
 - Universal Search unit regression, offline CLI matching, Pulse file-search
   capability enforcement, native UI launch, and a 23 ms query over the live
   image's 24 searchable items in VirtualBox

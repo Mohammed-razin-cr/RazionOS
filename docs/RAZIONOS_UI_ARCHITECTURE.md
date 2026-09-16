@@ -65,11 +65,17 @@ provider for Razion Pulse.
 - Fonts and icons continue through shared caches.
 - Corner rounding is limited to small controls and menu shells already
   supported efficiently by the graphics library.
+- Settings and Quick Settings invalidate their double buffers only when hover,
+  press, focus, or control state changes; ordinary pointer motion no longer
+  repaints the full window.
+- Both settings surfaces expose visible semantic focus rings and keyboard
+  navigation with Tab, Shift+Tab, Arrow keys, Enter, Space, and Escape.
 
 ## Current limitations
 
-- Theme tokens are compile-time C macros; there is no runtime theme service,
-  persisted theme schema, or automatic dark/light switch.
+- Theme tokens resolve from a per-user persisted configuration when each
+  Razion-aware application starts. Existing processes do not yet receive a
+  live theme-change notification.
 - Most older applications still own their client-area colors, padding, and
   control metrics. Stage 2 centralizes the highest-leverage shared components
   but cannot restyle every application without a broader widget toolkit.

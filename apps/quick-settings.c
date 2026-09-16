@@ -27,7 +27,7 @@ static yutani_t * yctx;
 static yutani_window_t * window;
 static gfx_context_t * ctx;
 static struct TT_Font * font, * bold;
-static int running=1, hover=-1, pressed=-1;
+static int running=1, hover=-1, pressed=-1, focus=12;
 static int network_available, mixer=-1, volume_percent, theme_light, dnd;
 static char accent[16]="teal";
 
@@ -83,31 +83,45 @@ static void label(int x,int y,int size,const char * text,uint32_t color,int stro
 	tt_set_size(strong?bold:font,size); tt_draw_string(ctx,strong?bold:font,x,y,text,color);
 }
 
-static void card(int id,int x,int y,int width,int height,const char * title,const char * detail,int enabled) {
-	uint32_t fill=id==pressed?RAZION_SELECTION:id==hover?RAZION_SURFACE_HOVER:RAZION_SURFACE;
-	draw_rounded_rectangle(ctx,x,y,width,height,8,fill); draw_rectangle_solid(ctx,x+10,y+height-1,width-20,1,enabled?RAZION_ACCENT:RAZION_BORDER);
-	label(x+16,y+25,14,title,RAZION_TEXT_PRIMARY,1); label(x+16,y+47,11,detail,enabled?RAZION_TEXT_SECONDARY:RAZION_WARNING,0);
+static void card(int id,int x,int y,int width,int height,const char * title,const char * detail,int status_ok,int interactive) {
+	uint32_t fill=interactive && id==pressed?RAZION_SELECTION:interactive && id==hover?RAZION_SURFACE_HOVER:RAZION_SURFACE;
+	if (interactive && id==focus && window->focused)
+		draw_rounded_rectangle(ctx,x-2,y-2,width+4,height+4,10,RAZION_FOCUS);
+	draw_rounded_rectangle(ctx,x,y,width,height,8,fill);
+	draw_rectangle_solid(ctx,x+10,y+height-1,width-20,1,status_ok?RAZION_ACCENT:RAZION_BORDER);
+	label(x+16,y+25,14,title,interactive?RAZION_TEXT_PRIMARY:RAZION_TEXT_SECONDARY,1);
+	label(x+16,y+47,11,detail,status_ok?RAZION_TEXT_SECONDARY:RAZION_WARNING,0);
 }
 
 static void redraw(void) {
 	struct decor_bounds b; decor_get_bounds(window,&b); draw_fill(ctx,RAZION_BACKGROUND);
 	int x=b.left_width+28,top=b.top_height; label(x,top+42,24,"Quick Settings",RAZION_TEXT_PRIMARY,1);
 	label(x,top+64,11,"Controls available on this RazionOS session",RAZION_TEXT_SECONDARY,0);
-	card(10,x,top+88,212,70,"Network",network_available?"Interface available":"No interface available",network_available);
-	char volume[64]; snprintf(volume,sizeof(volume),mixer>=0?"Volume %d%%  •  click to raise":"Mixer unavailable",volume_percent);
-	card(11,x+228,top+88,212,70,"Audio",volume,mixer>=0);
-	card(12,x,top+174,212,70,"Appearance",theme_light?"Light theme":"Dark theme",1);
-	card(13,x+228,top+174,212,70,"Do Not Disturb",dnd?"Notifications paused":"Notifications enabled",dnd);
-	card(14,x,top+260,212,70,"Settings","Open full settings",1);
-	card(15,x+228,top+260,212,70,"Power","Privileged restart",1);
-	label(x,window->height-b.bottom_height-24,10,"Bluetooth, brightness, and airplane mode are hidden when no working backend exists.",RAZION_TEXT_SECONDARY,0);
+	card(10,x,top+88,212,70,"Network",network_available?"Interface available":"No interface available",network_available,0);
+	char volume[64]; snprintf(volume,sizeof(volume),mixer>=0?"Volume %d%%  •  activate to raise":"Mixer unavailable",volume_percent);
+	card(11,x+228,top+88,212,70,"Audio",volume,mixer>=0,mixer>=0);
+	card(12,x,top+174,212,70,"Appearance",theme_light?"Light theme":"Dark theme",1,1);
+	card(13,x+228,top+174,212,70,"Do Not Disturb",dnd?"Notifications paused":"Notifications enabled",1,1);
+	card(14,x,top+260,212,70,"Settings","Open full settings",1,1);
+	card(15,x+228,top+260,212,70,"Power","Privileged restart",1,1);
+	label(x,window->height-b.bottom_height-24,10,"Tab/Arrows navigate  •  Enter activates  •  unavailable controls stay disabled",RAZION_TEXT_SECONDARY,0);
 	render_decorations(window,ctx,"Razion Quick Settings"); flip(ctx); yutani_flip(yctx,window);
 }
 
 static int hit(int x,int y) {
 	struct decor_bounds b; decor_get_bounds(window,&b); int left=b.left_width+28,top=b.top_height;
-	for (int i=0;i<6;++i) { int bx=left+(i%2)*228,by=top+88+(i/2)*86; if (x>=bx&&x<bx+212&&y>=by&&y<by+70) return 10+i; }
+	for (int i=1;i<6;++i) { int id=10+i; if (id==11 && mixer<0) continue;
+		int bx=left+(i%2)*228,by=top+88+(i/2)*86; if (x>=bx&&x<bx+212&&y>=by&&y<by+70) return id; }
 	return -1;
+}
+
+static void move_focus(int direction) {
+	int ids[5],count=0;
+	if (mixer>=0) ids[count++]=11;
+	for (int id=12;id<=15;++id) ids[count++]=id;
+	int current=0;
+	for (int i=0;i<count;++i) if (ids[i]==focus) { current=i; break; }
+	focus=ids[(current+direction+count)%count];
 }
 
 static void activate(int id) {
@@ -127,13 +141,25 @@ int main(void) {
 	font=tt_font_from_shm("sans-serif"); bold=tt_font_from_shm("sans-serif.bold"); read_state(); redraw();
 	while (running) { yutani_msg_t * msg=yutani_poll(yctx); if (!msg) continue;
 		switch(msg->type) {
-			case YUTANI_MSG_KEY_EVENT: { struct yutani_msg_key_event * k=(void*)msg->data; if(k->wid==window->wid&&k->event.action==KEY_ACTION_DOWN&&k->event.keycode==KEY_ESCAPE) running=0; break; }
+			case YUTANI_MSG_KEY_EVENT: { struct yutani_msg_key_event * k=(void*)msg->data;
+				if(k->wid!=window->wid||k->event.action!=KEY_ACTION_DOWN) break;
+				int changed=0;
+				if(k->event.keycode==KEY_ESCAPE) running=0;
+				else if(k->event.keycode=='\t') { move_focus(k->event.modifiers&(KEY_MOD_LEFT_SHIFT|KEY_MOD_RIGHT_SHIFT)?-1:1); changed=1; }
+				else if(k->event.keycode==KEY_ARROW_LEFT||k->event.keycode==KEY_ARROW_UP) { move_focus(-1); changed=1; }
+				else if(k->event.keycode==KEY_ARROW_RIGHT||k->event.keycode==KEY_ARROW_DOWN) { move_focus(1); changed=1; }
+				else if(k->event.key=='\n'||k->event.key==' ') { activate(focus); changed=1; }
+				if(changed) redraw();
+				break; }
 			case YUTANI_MSG_WINDOW_MOUSE_EVENT: { struct yutani_msg_window_mouse_event * m=(void*)msg->data; if(m->wid!=window->wid) break;
-				if(decor_handle_event(yctx,msg)==DECOR_CLOSE) running=0;
+				int decor=decor_handle_event(yctx,msg); if(decor==DECOR_CLOSE) running=0;
+				int old_hover=hover,old_pressed=pressed,activated=0;
 				int over=hit(m->new_x,m->new_y);
-				if(m->command==YUTANI_MOUSE_EVENT_DOWN) pressed=over; else if(m->command==YUTANI_MOUSE_EVENT_LEAVE){hover=-1;pressed=-1;}
-				else if(m->command==YUTANI_MOUSE_EVENT_RAISE||m->command==YUTANI_MOUSE_EVENT_CLICK){if(over==pressed)activate(over);pressed=-1;}
-				hover=over; redraw(); break; }
+				if(m->command==YUTANI_MOUSE_EVENT_DOWN) { pressed=over; if(over>=0) focus=over; } else if(m->command==YUTANI_MOUSE_EVENT_LEAVE){hover=-1;pressed=-1;}
+				else if(m->command==YUTANI_MOUSE_EVENT_RAISE||m->command==YUTANI_MOUSE_EVENT_CLICK){if(over>=0&&over==pressed){activate(over);activated=1;}pressed=-1;}
+				hover=over;
+				if(decor==DECOR_REDRAW||old_hover!=hover||old_pressed!=pressed||activated) redraw();
+				break; }
 			case YUTANI_MSG_WINDOW_FOCUS_CHANGE: { struct yutani_msg_window_focus_change * f=(void*)msg->data; if(f->wid==window->wid){window->focused=f->focused;redraw();} break; }
 			case YUTANI_MSG_WINDOW_CLOSE: case YUTANI_MSG_SESSION_END: running=0;
 		}

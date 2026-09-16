@@ -29,6 +29,7 @@ exec polygons,polygons,Polygons
 :games
 exec razion-snake,razion-snake,Razion Snake
 exec razion-tiles,razion-tiles,Razion Tiles
+exec razion-tictactoe,razion-tictactoe,Razion Tic-Tac-Toe
 :internet
 exec ripper,razion-ripper,Ripper
 :system

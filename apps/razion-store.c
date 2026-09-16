@@ -57,8 +57,9 @@ static const store_app_t catalogue[] = {
 	{"Calculator", "calculator", "A focused native calculator for everyday arithmetic.", "2.x", "94 KiB", "Education", "accessories-calculator", "/bin/calculator", "NCSA", "Razion graphics", "none", "Bundled scientific and standard calculations.", 0},
 	{"Help", "help-browser", "Read the local RazionOS documentation without a network connection.", "2.x", "102 KiB", "Education", "help-browser", "/bin/help-browser", "NCSA", "Markup renderer", "system documentation: read", "Local rich-text help topics.", 0},
 	{"System Monitor", "cpuwidget", "Inspect live CPU, memory, and network activity.", "2.x", "137 KiB", "System", "razion-monitor", "/bin/cpuwidget", "NCSA", "procfs", "system metrics: read", "Native live performance charts.", 0},
-	{"Razion Snake", "razion-snake", "A lightweight native arcade game with keyboard controls and scoring.", "1.0.0", "System image", "Games", "razion-snake", "/bin/razion-snake", "NCSA", "Razion graphics, Yutani", "none", "Added responsive arcade gameplay and restart controls.", 0},
-	{"Razion Tiles", "razion-tiles", "A native 2048-style number puzzle with local score tracking.", "1.0.0", "System image", "Games", "razion-tiles", "/bin/razion-tiles", "NCSA", "Razion graphics, Yutani", "none", "Added keyboard-driven tile merging and restart controls.", 0},
+	{"Razion Snake", "razion-snake", "A responsive native arcade game with adaptive speed, pause, and scoring.", "1.1.0", "System image", "Games", "razion-snake", "/bin/razion-snake", "NCSA", "Razion graphics, Yutani", "none", "Added arrows and WASD, automatic focus pause, best score, and pointer controls.", 0},
+	{"Razion Tiles", "razion-tiles", "A polished native 2048-style puzzle with undo and best-score tracking.", "1.1.0", "System image", "Games", "razion-tiles", "/bin/razion-tiles", "NCSA", "Razion graphics, Yutani", "none", "Added undo, 2048 milestone feedback, pointer actions, and arrows or WASD controls.", 0},
+	{"Razion Tic-Tac-Toe", "razion-tictactoe", "A native strategy game with an unbeatable computer opponent.", "1.0.0", "System image", "Games", "razion-tictactoe", "/bin/razion-tictactoe", "NCSA", "Razion graphics, Yutani", "none", "Added pointer and keyboard play, score tracking, and minimax computer strategy.", 0},
 };
 
 static const char * categories[] = {"Development", "Internet", "Graphics", "Education",
