@@ -203,6 +203,12 @@ static void render_decorations_fancy(yutani_window_t * window, gfx_context_t * c
 			draw_sprite(ctx, sprites[decors_active + 6], i + ll_width, height - l_height);
 		}
 		draw_sprite(ctx, sprites[decors_active + 7], width - lr_width, height - l_height);
+
+		draw_rounded_rectangle(ctx, bounds.left_width, 2,
+			width - bounds.width, bounds.top_height - 5, 10,
+			decors_active == ACTIVE ? razion_glass() : RAZION_SURFACE);
+		draw_rectangle_solid(ctx, bounds.left_width + 12, bounds.top_height - 3,
+			width - bounds.width - 24, 1, RAZION_BORDER);
 	}
 
 #define EXTRA_SPACE 120

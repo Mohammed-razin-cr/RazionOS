@@ -24,9 +24,9 @@ typedef struct {
 } settings_state_t;
 
 static const char * section_names[] = {"Personalization", "Desktop", "System", "Razion AI", "Privacy", "About"};
-static const char * accent_names[] = {"teal", "blue", "violet", "orange", "rose"};
+static const char * accent_names[] = {"blue", "teal", "violet", "orange", "rose"};
 static const uint32_t accent_colors[] = {
-	0xFF29C4B4, 0xFF4A91F7, 0xFF9769F5, 0xFFEB9A48, 0xFFE25C84
+	0xFF4EA3FF, 0xFF29C4B4, 0xFF9769F5, 0xFFEB9A48, 0xFFE25C84
 };
 static yutani_t * yctx;
 static yutani_window_t * window;
@@ -123,7 +123,7 @@ static void label(int x, int y, int size, const char * text, uint32_t color, int
 static void button(int id, int x, int y, int width, int height, const char * text, int selected) {
 	uint32_t fill = selected || id == pressed_id ? RAZION_SELECTION : id == hover_id ? RAZION_SURFACE_HOVER : RAZION_SURFACE_SECONDARY;
 	if (id == focus_id && window->focused)
-		draw_rounded_rectangle(ctx, x - 2, y - 2, width + 4, height + 4, 9, RAZION_FOCUS);
+		razion_draw_focus(ctx, x, y, width, height, 7);
 	draw_rounded_rectangle(ctx, x, y, width, height, 7, fill);
 	draw_rectangle_solid(ctx, x + 8, y + height - 1, width - 16, 1, selected ? RAZION_ACCENT : RAZION_BORDER);
 	tt_set_size(font, 13);
@@ -133,7 +133,7 @@ static void button(int id, int x, int y, int width, int height, const char * tex
 
 static void toggle(int id, int x, int y, const char * title, const char * detail, int enabled) {
 	if (id == focus_id && window->focused)
-		draw_rounded_rectangle(ctx, x - 2, y - 2, 392, 50, 8, RAZION_FOCUS);
+		razion_draw_focus(ctx, x, y, 388, 46, 6);
 	draw_rounded_rectangle(ctx, x, y, 388, 46, 6,
 		id == pressed_id ? RAZION_SELECTION : id == hover_id ? RAZION_SURFACE_HOVER : RAZION_BACKGROUND);
 	label(x, y + 18, 14, title, RAZION_TEXT_PRIMARY, 1);
@@ -144,6 +144,7 @@ static void toggle(int id, int x, int y, const char * title, const char * detail
 }
 
 static void header(int x, int top, const char * title, const char * detail) {
+	razion_draw_accent_bar(ctx, x, top + 18, 96);
 	label(x, top + 38, 25, title, RAZION_TEXT_PRIMARY, 1);
 	label(x, top + 62, 12, detail, RAZION_TEXT_SECONDARY, 0);
 	draw_rectangle_solid(ctx, x, top + 78, window->width - x - 28, 1, RAZION_BORDER);
@@ -195,13 +196,13 @@ static void redraw(void) {
 	draw_fill(ctx, RAZION_BACKGROUND);
 	int top = bounds.top_height, sidebar = window->width < 740 ? 174 : 205;
 	draw_rectangle_solid(ctx, bounds.left_width, top, sidebar, window->height - bounds.height, RAZION_SURFACE);
+	razion_draw_accent_bar(ctx, bounds.left_width + 24, top + 22, 76);
 	label(bounds.left_width + 24, top + 42, 18, "RAZIONOS", RAZION_ACCENT, 1);
 	label(bounds.left_width + 24, top + 62, 10, "SYSTEM SETTINGS", RAZION_TEXT_SECONDARY, 1);
 	for (int i = 0; i < SECTION_COUNT; ++i) {
 		int y = top + 91 + i * 48;
 		if (focus_id == 100 + i && window->focused)
-			draw_rounded_rectangle(ctx, bounds.left_width + 10, y - 2,
-				sidebar - 20, 42, 8, RAZION_FOCUS);
+			razion_draw_focus(ctx, bounds.left_width + 12, y, sidebar - 24, 38, 6);
 		if (section == i || hover_id == 100 + i) draw_rounded_rectangle(ctx, bounds.left_width + 12, y,
 			sidebar - 24, 38, 6, section == i ? RAZION_SELECTION : RAZION_SURFACE_HOVER);
 		if (section == i) draw_rounded_rectangle(ctx, bounds.left_width + 12, y + 8, 3, 22, 2, RAZION_ACCENT);

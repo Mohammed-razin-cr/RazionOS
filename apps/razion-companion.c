@@ -17,6 +17,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <razion/theme.h>
 #include <toaru/decorations.h>
 #include <toaru/graphics.h>
 #include <toaru/pex.h>
@@ -28,17 +29,17 @@
 #define CONTROL_HEIGHT 690
 #define OVERLAY_SIZE 230
 
-#define C_BACKGROUND rgb(8,12,18)
-#define C_PANEL rgb(15,22,31)
-#define C_PANEL_HOVER rgb(23,34,48)
-#define C_BORDER rgb(45,61,78)
-#define C_BLUE rgb(77,162,255)
-#define C_TEXT rgb(235,242,248)
-#define C_MUTED rgb(145,162,179)
-#define C_GREEN rgb(45,207,141)
-#define C_ORANGE rgb(245,157,54)
+#define C_BACKGROUND RAZION_BACKGROUND
+#define C_PANEL RAZION_SURFACE
+#define C_PANEL_HOVER RAZION_SURFACE_HOVER
+#define C_BORDER RAZION_BORDER
+#define C_BLUE RAZION_ACCENT
+#define C_TEXT RAZION_TEXT_PRIMARY
+#define C_MUTED RAZION_TEXT_SECONDARY
+#define C_GREEN RAZION_SUCCESS
+#define C_ORANGE RAZION_WARNING
 #define C_PURPLE rgb(173,106,255)
-#define C_RED rgb(239,91,91)
+#define C_RED RAZION_ERROR
 
 static const uint32_t color_choices[] = {
 	0, 0x75A7FF, 0x5AD6B0, 0xF3A65A, 0xC58AFF, 0xF0809D, 0xE4D16A, 0xA5B0BD

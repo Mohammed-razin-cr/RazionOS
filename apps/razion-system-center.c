@@ -20,7 +20,7 @@ static yutani_t * yctx;
 static yutani_window_t * window;
 static gfx_context_t * ctx;
 static struct TT_Font * font, * bold;
-static int running = 1, hover = -1, pressed = -1, dnd;
+static int running = 1, hover = -1, pressed = -1, focus = 1, dnd;
 static char persistence[80] = "unknown";
 static char status[160] = "System Center ready.";
 
@@ -79,6 +79,7 @@ static void small_text(int x, int y, int width, const char * text) {
 static void button(int id, int x, int y, int w, const char * text) {
 	uint32_t fill = id == pressed ? RAZION_SELECTION :
 		id == hover ? RAZION_SURFACE_HOVER : RAZION_SURFACE_SECONDARY;
+	if (id == focus && window->focused) razion_draw_focus(ctx, x, y, w, 42, 8);
 	draw_rounded_rectangle(ctx, x, y, w, 42, 8, fill);
 	tt_set_size(font, 12);
 	int tw = tt_string_width(font, text);
@@ -87,7 +88,7 @@ static void button(int id, int x, int y, int w, const char * text) {
 
 static void card(int x, int y, int w, int h, const char * title,
 	const char * detail, uint32_t accent) {
-	draw_rounded_rectangle(ctx, x, y, w, h, 8, RAZION_SURFACE);
+	razion_draw_card(ctx, x, y, w, h, RAZION_SURFACE);
 	draw_rectangle_solid(ctx, x + 12, y + h - 1, w - 24, 1, accent);
 	label(bold, x + 16, y + 28, 15, title, RAZION_TEXT_PRIMARY);
 	small_text(x + 16, y + 51, w - 32, detail);
@@ -100,10 +101,15 @@ static void redraw(void) {
 	int left = b.left_width + 30;
 	int top = b.top_height;
 
+	razion_draw_accent_bar(ctx, left, top + 24, 112);
 	label(bold, left, top + 42, 25, "Razion System Center", RAZION_TEXT_PRIMARY);
 	label(font, left, top + 66, 11,
 		"Storage, updates, notifications, screenshots, lock screen, and system identity.",
 		RAZION_TEXT_SECONDARY);
+	tt_set_size(font, 10);
+	razion_draw_chip(ctx, font, left + 540, top + 33,
+		!strcmp(persistence, "ready") ? "Persistent" : "Live session",
+		!strcmp(persistence, "ready") ? RAZION_SUCCESS : RAZION_WARNING);
 
 	char persistence_detail[160];
 	snprintf(persistence_detail, sizeof(persistence_detail),
@@ -158,6 +164,12 @@ static int hit(int x, int y) {
 	return -1;
 }
 
+static void move_focus(int direction) {
+	focus += direction;
+	if (focus < 1) focus = 13;
+	if (focus > 13) focus = 1;
+}
+
 static void activate(int id) {
 	if (id == 1) spawn4("/bin/file-browser", getenv("HOME"), NULL, NULL);
 	else if (id == 2) snprintf(status, sizeof(status),
@@ -201,8 +213,12 @@ int main(void) {
 		switch (msg->type) {
 			case YUTANI_MSG_KEY_EVENT: {
 				struct yutani_msg_key_event * key = (void *)msg->data;
-				if (key->wid == window->wid && key->event.action == KEY_ACTION_DOWN &&
-					key->event.keycode == KEY_ESCAPE) running = 0;
+				if (key->wid != window->wid || key->event.action != KEY_ACTION_DOWN) break;
+				if (key->event.keycode == KEY_ESCAPE) running = 0;
+				else if (key->event.keycode == '\t') { move_focus(key->event.modifiers & (KEY_MOD_LEFT_SHIFT|KEY_MOD_RIGHT_SHIFT) ? -1 : 1); redraw(); }
+				else if (key->event.keycode == KEY_ARROW_LEFT || key->event.keycode == KEY_ARROW_UP) { move_focus(-1); redraw(); }
+				else if (key->event.keycode == KEY_ARROW_RIGHT || key->event.keycode == KEY_ARROW_DOWN) { move_focus(1); redraw(); }
+				else if (key->event.key == '\n' || key->event.key == ' ') { activate(focus); redraw(); }
 				break;
 			}
 			case YUTANI_MSG_WINDOW_MOUSE_EVENT: {
@@ -212,7 +228,7 @@ int main(void) {
 				if (decor == DECOR_CLOSE) running = 0;
 				int old_hover = hover, old_pressed = pressed;
 				int over = hit(mouse->new_x, mouse->new_y);
-				if (mouse->command == YUTANI_MOUSE_EVENT_DOWN) pressed = over;
+				if (mouse->command == YUTANI_MOUSE_EVENT_DOWN) { pressed = over; if (over > 0) focus = over; }
 				else if (mouse->command == YUTANI_MOUSE_EVENT_LEAVE) hover = pressed = -1;
 				else if (mouse->command == YUTANI_MOUSE_EVENT_RAISE ||
 					mouse->command == YUTANI_MOUSE_EVENT_CLICK) {

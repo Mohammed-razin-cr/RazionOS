@@ -20,6 +20,7 @@ static yutani_window_t * window;
 static gfx_context_t * ctx;
 static struct TT_Font * font, * bold;
 static int board[SIZE][SIZE], undo_board[SIZE][SIZE];
+static int changed_flash[SIZE][SIZE];
 static int score, best_score, undo_score;
 static int running = 1, finished, undo_available, reached_goal;
 static int hover = -1, pressed = -1;
@@ -43,6 +44,7 @@ static void set_status(const char * message) {
 
 static void reset_game(void) {
 	memset(board, 0, sizeof(board));
+	memset(changed_flash, 0, sizeof(changed_flash));
 	score = 0; finished = 0; reached_goal = 0; undo_available = 0;
 	add_tile(); add_tile();
 	set_status("New board ready. Use arrows or WASD.");
@@ -92,6 +94,9 @@ static int move_board(int direction) {
 	memcpy(undo_board, before, sizeof(undo_board));
 	undo_score = before_score; undo_available = 1;
 	add_tile();
+	memset(changed_flash, 0, sizeof(changed_flash));
+	for (int y = 0; y < SIZE; ++y) for (int x = 0; x < SIZE; ++x)
+		if (board[y][x] != before[y][x]) changed_flash[y][x] = 1;
 	if (score > best_score) best_score = score;
 	set_status(reached_goal ? "2048 reached. You can keep playing." : "Nice move.");
 	return 1;
@@ -108,6 +113,7 @@ static int can_move(void) {
 static int undo_move(void) {
 	if (!undo_available) return 0;
 	memcpy(board, undo_board, sizeof(board));
+	memset(changed_flash, 0, sizeof(changed_flash));
 	score = undo_score; undo_available = 0; finished = 0; reached_goal = 0;
 	set_status("Undo restored the previous board.");
 	return 1;
@@ -127,6 +133,7 @@ static uint32_t tile_color(int value) {
 static void draw_button(int id, int x, int y, const char * label, int enabled) {
 	uint32_t fill = !enabled ? RAZION_SURFACE : id == pressed ? RAZION_SELECTION :
 		id == hover ? RAZION_SURFACE_HOVER : RAZION_SURFACE_SECONDARY;
+	if (enabled && window->focused && (id == hover || id == pressed)) razion_draw_focus(ctx, x, y, 142, 44, 8);
 	draw_rounded_rectangle(ctx, x, y, 142, 44, 8, fill);
 	tt_set_size(font, 12); int width = tt_string_width(font, label);
 	tt_draw_string(ctx, font, x + (142 - width) / 2, y + 27, label,
@@ -136,16 +143,21 @@ static void draw_button(int id, int x, int y, const char * label, int enabled) {
 static void redraw(void) {
 	struct decor_bounds b; decor_get_bounds(window, &b); draw_fill(ctx, RAZION_BACKGROUND);
 	int left = (window->width - 420) / 2, top = b.top_height + 86;
+	razion_draw_accent_bar(ctx, b.left_width + 30, b.top_height + 20, 82);
 	tt_set_size(bold, 22); tt_draw_string(ctx, bold, b.left_width + 30, b.top_height + 39, "Razion Tiles", RAZION_TEXT_PRIMARY);
 	tt_set_size(font, 11); tt_draw_string(ctx, font, b.left_width + 30, b.top_height + 61, "Arrows / WASD move  •  U undoes  •  R starts over", RAZION_TEXT_SECONDARY);
 	char label[80]; snprintf(label, sizeof(label), "Score %d   Best %d", score, best_score);
 	tt_set_size(bold, 12); int label_width = tt_string_width(bold, label);
 	tt_draw_string(ctx, bold, window->width - b.right_width - label_width - 30, b.top_height + 39, label, RAZION_ACCENT);
 	tt_set_size(font, 10); tt_draw_string(ctx, font, b.left_width + 30, b.top_height + 78, status, RAZION_TEXT_SECONDARY);
-	draw_rounded_rectangle(ctx, left - 10, top - 10, 440, 440, 10, RAZION_SURFACE);
+	razion_draw_card(ctx, left - 10, top - 10, 440, 440, RAZION_SURFACE);
 	for (int y = 0; y < SIZE; ++y) for (int x = 0; x < SIZE; ++x) {
 		int px = left + x * STEP, py = top + y * STEP, value = board[y][x];
 		draw_rounded_rectangle(ctx, px, py, CELL, CELL, 8, tile_color(value));
+		if (changed_flash[y][x] && value) {
+			draw_rounded_rectangle(ctx, px + 4, py + 4, CELL - 8, CELL - 8, 7, premultiply(rgba(255,255,255,42)));
+			draw_rectangle_solid(ctx, px + 16, py + CELL - 9, CELL - 32, 2, RAZION_ACCENT);
+		}
 		if (value) {
 			char number[16]; snprintf(number, sizeof(number), "%d", value);
 			tt_set_size(bold, value > 999 ? 18 : value > 99 ? 21 : 25);
@@ -156,13 +168,17 @@ static void redraw(void) {
 	if (finished || reached_goal) {
 		const char * title = finished ? "No moves left" : "2048 reached!";
 		const char * detail = finished ? "Undo or start a new game" : "Keep going or start fresh";
-		draw_rounded_rectangle(ctx, left + 70, top + 164, 280, 82, 10, premultiply(rgba(10,16,24,235)));
+		draw_rounded_rectangle(ctx, left + 70, top + 164, 280, 82, 10, razion_scrim());
+		draw_rectangle_solid(ctx, left + 100, top + 245, 220, 1, RAZION_ACCENT);
 		tt_set_size(bold, 18); int width = tt_string_width(bold, title);
 		tt_draw_string(ctx, bold, left + (420 - width) / 2, top + 196, title, RAZION_TEXT_PRIMARY);
 		tt_set_size(font, 12); width = tt_string_width(font, detail);
 		tt_draw_string(ctx, font, left + (420 - width) / 2, top + 222, detail, RAZION_TEXT_SECONDARY);
 	}
 	int buttons_y = top + 432;
+	tt_set_size(font, 9);
+	razion_draw_chip(ctx, font, left + 152, buttons_y - 31,
+		undo_available ? "Undo ready" : "No undo", undo_available ? RAZION_ACCENT : RAZION_TEXT_SECONDARY);
 	draw_button(0, left + 57, buttons_y, "New game  (R)", 1);
 	draw_button(1, left + 221, buttons_y, "Undo  (U)", undo_available);
 	render_decorations(window, ctx, "Razion Tiles"); flip(ctx); yutani_flip(yctx, window);

@@ -189,6 +189,30 @@ static int winning_cell(int cell) {
 	return 0;
 }
 
+static int winning_line_index(void) {
+	if (!winner) return -1;
+	for (int i = 0; i < 8; ++i) {
+		int a = winning_lines[i][0];
+		int b = winning_lines[i][1];
+		int c = winning_lines[i][2];
+		if (board[a] == winner && board[b] == winner && board[c] == winner) return i;
+	}
+	return -1;
+}
+
+static void draw_winning_line(int board_left, int board_top) {
+	int line = winning_line_index();
+	if (line < 0) return;
+	int a = winning_lines[line][0];
+	int c = winning_lines[line][2];
+	int ax = board_left + (a % 3) * (CELL_SIZE + CELL_GAP) + CELL_SIZE / 2;
+	int ay = board_top + (a / 3) * (CELL_SIZE + CELL_GAP) + CELL_SIZE / 2;
+	int cx = board_left + (c % 3) * (CELL_SIZE + CELL_GAP) + CELL_SIZE / 2;
+	int cy = board_top + (c / 3) * (CELL_SIZE + CELL_GAP) + CELL_SIZE / 2;
+	draw_line_aa(ctx, ax, cx, ay, cy, winner == 'X' ? RAZION_SUCCESS : RAZION_WARNING, 9.0f);
+	draw_line_aa(ctx, ax, cx, ay, cy, RAZION_TEXT_PRIMARY, 2.0f);
+}
+
 static void draw_mark(int cell, int x, int y, uint32_t cell_color) {
 	if (board[cell] == 'X') {
 		draw_line_aa(ctx, x + 29, x + CELL_SIZE - 29, y + 29, y + CELL_SIZE - 29, RAZION_ACCENT, 7.0f);
@@ -217,6 +241,7 @@ static void redraw(void) {
 	int board_left = content_left + (content_width - BOARD_SIZE) / 2;
 	int board_top = b.top_height + 116;
 
+	razion_draw_accent_bar(ctx, content_left + 32, b.top_height + 24, 128);
 	tt_set_size(bold, 23);
 	tt_draw_string(ctx, bold, content_left + 32, b.top_height + 43,
 		"Razion Tic-Tac-Toe", RAZION_TEXT_PRIMARY);
@@ -238,15 +263,16 @@ static void redraw(void) {
 		if (winning_cell(cell)) fill = RAZION_SELECTION;
 		else if (!game_over && cell == pressed) fill = RAZION_SELECTION;
 		else if (!game_over && cell == hover && !board[cell]) fill = RAZION_SURFACE_HOVER;
-		else if (cell == last_player_cell) fill = rgb(36, 68, 92);
-		else if (cell == last_computer_cell) fill = rgb(78, 58, 42);
+		else if (cell == last_player_cell) fill = RAZION_SELECTION;
+		else if (cell == last_computer_cell) fill = RAZION_SURFACE_HOVER;
 		draw_rounded_rectangle(ctx, x, y, CELL_SIZE, CELL_SIZE, 10, fill);
 		if (window->focused && cell == selected) {
-			draw_rounded_rectangle(ctx, x + 3, y + 3, CELL_SIZE - 6, CELL_SIZE - 6, 8, RAZION_BORDER);
+			razion_draw_focus(ctx, x + 3, y + 3, CELL_SIZE - 6, CELL_SIZE - 6, 8);
 			draw_rounded_rectangle(ctx, x + 5, y + 5, CELL_SIZE - 10, CELL_SIZE - 10, 7, fill);
 		}
 		draw_mark(cell, x, y, fill);
 	}
+	draw_winning_line(board_left, board_top);
 
 	const char * status = "Your turn - choose an empty square";
 	uint32_t status_color = RAZION_TEXT_PRIMARY;
@@ -260,6 +286,7 @@ static void redraw(void) {
 	int button_y = board_top + BOARD_SIZE + 63;
 	uint32_t button_fill = pressed == BOARD_CELLS ? RAZION_SELECTION :
 		(hover == BOARD_CELLS ? RAZION_SURFACE_HOVER : RAZION_SURFACE);
+	if (window->focused && (hover == BOARD_CELLS || pressed == BOARD_CELLS || game_over)) razion_draw_focus(ctx, button_x, button_y, 190, 46, 8);
 	draw_rounded_rectangle(ctx, button_x, button_y, 190, 46, 8, button_fill);
 	centered_text(font, 12, button_y + 28, "New round  (R)", RAZION_TEXT_PRIMARY);
 	centered_text(font, 10, button_y + 70, "Esc closes the game", RAZION_TEXT_SECONDARY);

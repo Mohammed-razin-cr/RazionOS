@@ -93,6 +93,12 @@ healthy server is already running. The script never opens the port on the
 host's other network interfaces. It does not install a Windows startup task;
 the host model must be started again after a host reboot.
 
+For a first-time Windows setup, run
+`& .\scripts\Install-RazionAI.ps1 -Start`. The installer downloads the official
+llama.cpp CPU release into `%LOCALAPPDATA%\RazionOS\AI\llama.cpp`; the start
+script then downloads the selected GGUF through llama.cpp and waits for a real
+`/v1/models` response. Neither runtime nor model is copied into Git or the ISO.
+
 Use a model you have permission to download and run; the example is a small
 GGUF model, not a RazionOS-bundled component. Keep the terminal open only when
 starting `llama-server` directly; the launcher starts it in the background.
@@ -102,6 +108,20 @@ host's other network interfaces. Verify `http://127.0.0.1:8080/v1/models`
 on the host before starting RazionOS. If using a different VM network mode,
 configure a reachable host address and restrict access to a trusted network.
 Model weights remain on the host and are not bundled in RazionOS.
+
+### Automatic recovery on Windows
+
+The optional watchdog starts with the current Windows user, checks llama.cpp
+health every 15 seconds, and restarts the model server when it is unavailable:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\Enable-RazionAI-Autostart.ps1
+```
+
+The watchdog runs as the per-user `RazionOS AI Watchdog` scheduled task. It
+does not require administrator privileges, does not store a password, prevents
+duplicate watchdog instances, and records recovery events in
+`%LOCALAPPDATA%\RazionOS\AI\logs\watchdog.log`.
 
 ## Optional Ollama configuration
 
@@ -146,6 +166,11 @@ The llama.cpp adapter asks for one exact native-broker action token and limits
 classification generation to 16 tokens at zero temperature. Pulse reconstructs
 the official action definition from that token rather than trusting a model-
 provided path, command, or risk label.
+
+Razion Assistant uses the SDK begin/poll/cancel path. The window continues to
+process keyboard, pointer, focus, and redraw events while inference is pending;
+the visible Cancel control and Escape both stop the client wait. This prevents
+a slow or missing provider from freezing the desktop application.
 
 ## Diagnostics
 

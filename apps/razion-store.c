@@ -138,8 +138,9 @@ static void draw_ellipsized(struct TT_Font * face, int size, int x, int y,
 
 static void button(int x, int y, int width, int height, const char * label,
 	int selected_button, int disabled) {
+	if (selected_button && window->focused) razion_draw_focus(ctx, x, y, width, height, 6);
 	draw_rounded_rectangle(ctx, x, y, width, height, 5,
-		selected_button ? RAZION_SELECTION : RAZION_SURFACE_SECONDARY);
+		disabled ? RAZION_SURFACE : selected_button ? RAZION_SELECTION : RAZION_SURFACE_SECONDARY);
 	draw_rectangle_solid(ctx, x, y, width, 1,
 		selected_button ? RAZION_FOCUS : RAZION_BORDER);
 	tt_set_size(font, 10);
@@ -160,7 +161,7 @@ static void icon_or_fallback(const store_app_t * app, int x, int y) {
 }
 
 static void draw_security_summary(int x, int y, int width, const store_app_t * app) {
-	draw_rounded_rectangle(ctx, x, y, width, 118, 7, RAZION_SURFACE_SECONDARY);
+	razion_draw_card(ctx, x, y, width, 118, RAZION_SURFACE_SECONDARY);
 	tt_set_size(bold, 11); tt_draw_string(ctx, bold, x + 14, y + 20, "Before any transaction", RAZION_TEXT_PRIMARY);
 	tt_set_size(font, 9);
 	char line[320], size_text[32];
@@ -177,11 +178,15 @@ static void draw_security_summary(int x, int y, int width, const store_app_t * a
 
 static void draw_details(int x, int y, int width, int height) {
 	const store_app_t * app = &catalogue[selected];
-	draw_rounded_rectangle(ctx, x, y, width, height, 7, RAZION_SURFACE);
+	razion_draw_card(ctx, x, y, width, height, RAZION_SURFACE);
 	draw_rectangle_solid(ctx, x, y, width, 1, RAZION_BORDER);
 	icon_or_fallback(app, x + 18, y + 18);
 	tt_set_size(bold, 18); draw_ellipsized(bold, 18, x + 78, y + 38, app->name, width - 96, RAZION_TEXT_PRIMARY);
 	tt_set_size(font, 9); tt_draw_string(ctx, font, x + 78, y + 56, app->category, RAZION_ACCENT);
+	tt_set_size(font, 9);
+	razion_draw_chip(ctx, font, x + width - 126, y + 19,
+		app_installed(app) ? "Installed" : "Unavailable",
+		app_installed(app) ? RAZION_SUCCESS : RAZION_WARNING);
 	draw_ellipsized(font, 10, x + 18, y + 89, app->description, width - 36, RAZION_TEXT_SECONDARY);
 
 	int row = y + 119;
@@ -206,7 +211,7 @@ static void draw_details(int x, int y, int width, int height) {
 }
 
 static void draw_empty(int x, int y, int width, const char * title, const char * explanation) {
-	draw_rounded_rectangle(ctx, x, y, width, 126, 7, RAZION_SURFACE);
+	razion_draw_card(ctx, x, y, width, 126, RAZION_SURFACE);
 	tt_set_size(bold, 15); tt_draw_string(ctx, bold, x + 20, y + 34, title, RAZION_TEXT_PRIMARY);
 	tt_set_size(font, 10); draw_ellipsized(font, 10, x + 20, y + 58, explanation, width - 40, RAZION_TEXT_SECONDARY);
 	tt_draw_string(ctx, font, x + 20, y + 88,
@@ -222,6 +227,7 @@ static void redraw(void) {
 	draw_fill(ctx, RAZION_BACKGROUND);
 	draw_rectangle_solid(ctx, ox, oy, nav_w, height, RAZION_SURFACE);
 	draw_rectangle_solid(ctx, ox + nav_w - 1, oy, 1, height, RAZION_BORDER);
+	razion_draw_accent_bar(ctx, ox + 16, oy + 14, 72);
 	tt_set_size(bold, 18); tt_draw_string(ctx, bold, ox + 16, oy + 31, "RAZION", RAZION_ACCENT);
 	tt_set_size(font, 10); tt_draw_string(ctx, font, ox + 16, oy + 49, "STORE", RAZION_TEXT_SECONDARY);
 	for (int i = 0; i < 6; ++i) {
@@ -235,6 +241,7 @@ static void redraw(void) {
 
 	int content_x = ox + nav_w + 16;
 	int content_w = width - nav_w - 32;
+	razion_draw_accent_bar(ctx, content_x, oy + 12, 112);
 	tt_set_size(bold, 22); tt_draw_string(ctx, bold, content_x, oy + 35,
 		page == 0 ? "Featured applications" : navigation[page], RAZION_TEXT_PRIMARY);
 	int ai_w = width < 900 ? 92 : 122;
@@ -281,6 +288,7 @@ static void redraw(void) {
 			int x = content_x + (shown % cols) * (card_w + gap);
 			int y = body_y + (shown / cols) * 78;
 			if (y + 70 > oy + height - 35) break;
+			if (selected == (int)i && window->focused) razion_draw_focus(ctx, x, y, card_w, 69, 6);
 			draw_rounded_rectangle(ctx, x, y, card_w, 69, 6,
 				selected == (int)i ? RAZION_SELECTION : RAZION_SURFACE);
 			draw_rectangle_solid(ctx, x, y, card_w, 1,

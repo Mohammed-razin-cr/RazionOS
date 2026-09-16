@@ -750,19 +750,19 @@ static void refresh_background(void) {
 		panel_context.color_text_focused   = RAZION_TEXT_PRIMARY;
 		panel_context.color_text_shadow    = rgba(0,0,0,160);
 		panel_context.color_icon_normal    = RAZION_TEXT_PRIMARY;
-		panel_context.color_widget_bg_base   = rgba(76,216,200,32);
-		panel_context.color_widget_bg_active = rgba(41,196,180,92);
-		panel_context.color_bg_fill = rgba(17,22,29,220);
+		panel_context.color_widget_bg_base   = rgba(110,219,255,30);
+		panel_context.color_widget_bg_active = rgba(74,163,255,102);
+		panel_context.color_bg_fill = rgba(18,22,28,188);
 	} else {
 		/* Dark text, for light backgrounds. */
-		panel_context.color_text_normal    = rgb(0,0,0);
-		panel_context.color_text_hilighted = rgb(0,0,0);
-		panel_context.color_text_focused   = rgb(0,0,0);
-		panel_context.color_icon_normal    = rgb(0,0,0);
-		panel_context.color_text_shadow    = rgb(255,255,255);
-		panel_context.color_widget_bg_base   = rgba(0,0,0,20);
-		panel_context.color_widget_bg_active = rgba(0,0,0,70);
-		panel_context.color_bg_fill = rgba(255,255,255,50);
+		panel_context.color_text_normal    = RAZION_TEXT_PRIMARY;
+		panel_context.color_text_hilighted = RAZION_TEXT_PRIMARY;
+		panel_context.color_text_focused   = RAZION_TEXT_PRIMARY;
+		panel_context.color_icon_normal    = RAZION_TEXT_PRIMARY;
+		panel_context.color_text_shadow    = rgba(255,255,255,130);
+		panel_context.color_widget_bg_base   = rgba(0,113,227,24);
+		panel_context.color_widget_bg_active = rgba(0,113,227,76);
+		panel_context.color_bg_fill = rgba(255,255,255,136);
 	}
 
 	if (panel_context.true_blur) {
@@ -773,6 +773,8 @@ static void refresh_background(void) {
 	}
 
 	draw_rounded_rectangle(ctx, 0, 0, ctx->width, ctx->height, 0, panel_context.color_bg_fill);
+	draw_rectangle_solid(ctx, 0, ctx->height - 1, ctx->width, 1,
+		razion_theme_is_light() ? rgba(255,255,255,160) : rgba(255,255,255,28));
 
 	panel_context.color_special        = RAZION_ACCENT;
 	panel_context.font_size_default    = 14;
@@ -856,7 +858,7 @@ static int widget_leave_generic(struct PanelWidget * this, struct yutani_msg_win
 
 void panel_highlight_widget(struct PanelWidget * this, gfx_context_t * ctx, int active) {
 	if (this->highlighted || active) {
-		draw_rounded_rectangle(ctx, 4, 4, ctx->width - 8, ctx->height - 8, 6,
+		draw_rounded_rectangle(ctx, 3, 4, ctx->width - 6, ctx->height - 8, 10,
 		active ? panel_context.color_widget_bg_active : panel_context.color_widget_bg_base);
 	}
 }

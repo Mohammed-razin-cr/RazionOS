@@ -27,7 +27,7 @@ static yutani_t * yctx;
 static yutani_window_t * window;
 static gfx_context_t * ctx;
 static struct TT_Font * font, * bold;
-static int running = 1, hover = -1, pressed = -1;
+static int running = 1, hover = -1, pressed = -1, focus_id = 1;
 static int cloud_allowed, ollama_enabled, audit_enabled;
 static char recent_activity[180];
 
@@ -93,12 +93,11 @@ static void row(int x, int y, int width, const char * title, const char * detail
 }
 
 static void button(int id, int x, int y, int width, const char * text) {
-	draw_rounded_rectangle(ctx, x, y, width, 36, 6,
-		id == pressed ? RAZION_SELECTION : id == hover ? RAZION_SURFACE_HOVER : RAZION_SURFACE_SECONDARY);
-	draw_rectangle_solid(ctx, x + 8, y + 35, width - 16, 1, id == hover ? RAZION_FOCUS : RAZION_BORDER);
-	tt_set_size(font, 10);
-	int tw = tt_string_width(font, text);
-	label(x + (width - tw) / 2, y + 23, 10, text, RAZION_TEXT_PRIMARY, 0);
+	unsigned state = RAZION_CONTROL_NORMAL;
+	if (id == hover) state |= RAZION_CONTROL_HOVER;
+	if (id == pressed) state |= RAZION_CONTROL_PRESSED;
+	if (id == focus_id && window->focused) state |= RAZION_CONTROL_FOCUSED;
+	razion_draw_button(ctx, font, x, y, width, 36, text, state);
 }
 
 static void redraw(void) {
@@ -106,10 +105,11 @@ static void redraw(void) {
 	draw_fill(ctx, RAZION_BACKGROUND);
 	int x = bounds.left_width + 28, top = bounds.top_height;
 	int width = window->width - bounds.width - 56;
+	razion_draw_accent_bar(ctx, x, top + 20, 112);
 	label(x, top + 39, 23, "Privacy Center", RAZION_TEXT_PRIMARY, 1);
 	label(x, top + 61, 10, "Live policy and capability status — unsupported controls are never simulated", RAZION_TEXT_SECONDARY, 0);
 
-	draw_rounded_rectangle(ctx, x, top + 82, width, 285, 7, RAZION_SURFACE);
+	razion_draw_card(ctx, x, top + 82, width, 285, RAZION_SURFACE);
 	int rx = x + 18, rw = width - 36, y = top + 92;
 	row(rx, y, rw, "Network access", "Network is system-wide; per-application mediation is not implemented.",
 		"CONTROL UNAVAILABLE", RAZION_WARNING); y += 55;
@@ -123,7 +123,7 @@ static void redraw(void) {
 		ollama_enabled ? "CONFIGURED" : "NOT CONFIGURED", ollama_enabled ? RAZION_ACCENT : RAZION_TEXT_SECONDARY);
 
 	label(x, top + 401, 12, "Recent AI activity", RAZION_TEXT_PRIMARY, 1);
-	draw_rounded_rectangle(ctx, x, top + 416, width, 54, 6, RAZION_SURFACE);
+	razion_draw_card(ctx, x, top + 416, width, 54, RAZION_SURFACE);
 	char * activity = tt_ellipsify(audit_enabled ? recent_activity : "AI activity auditing is disabled by policy.", 9, font, width - 28, NULL);
 	label(x + 14, top + 448, 9, activity, RAZION_TEXT_SECONDARY, 0);
 	free(activity);
@@ -166,13 +166,21 @@ int main(void) {
 		yutani_msg_t * message = yutani_poll(yctx); if (!message) continue;
 		if (message->type == YUTANI_MSG_KEY_EVENT) {
 			struct yutani_msg_key_event * key = (void *)message->data;
-			if (key->wid == window->wid && key->event.action == KEY_ACTION_DOWN && key->event.keycode == KEY_ESCAPE) running = 0;
+			if (key->wid == window->wid && key->event.action == KEY_ACTION_DOWN) {
+				if (key->event.keycode == KEY_ESCAPE) running = 0;
+				else if (key->event.keycode == '\t' || key->event.keycode == KEY_ARROW_RIGHT ||
+					key->event.keycode == KEY_ARROW_DOWN) {
+					focus_id = focus_id % 3 + 1; redraw();
+				} else if (key->event.keycode == KEY_ARROW_LEFT || key->event.keycode == KEY_ARROW_UP) {
+					focus_id = focus_id == 1 ? 3 : focus_id - 1; redraw();
+				} else if (key->event.key == '\n') { activate(focus_id); redraw(); }
+			}
 		} else if (message->type == YUTANI_MSG_WINDOW_MOUSE_EVENT) {
 			struct yutani_msg_window_mouse_event * mouse = (void *)message->data;
 			if (mouse->wid == window->wid) {
 				if (decor_handle_event(yctx, message) == DECOR_CLOSE) running = 0;
 				int over = hit_test(mouse->new_x, mouse->new_y);
-				if (mouse->command == YUTANI_MOUSE_EVENT_DOWN) pressed = over;
+				if (mouse->command == YUTANI_MOUSE_EVENT_DOWN) { pressed = over; if (over > 0) focus_id = over; }
 				else if (mouse->command == YUTANI_MOUSE_EVENT_LEAVE) { hover = -1; pressed = -1; }
 				else if (mouse->command == YUTANI_MOUSE_EVENT_RAISE || mouse->command == YUTANI_MOUSE_EVENT_CLICK) {
 					if (over >= 0 && over == pressed) activate(over);

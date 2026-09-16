@@ -20,8 +20,8 @@
 #include <toaru/yutani.h>
 
 #define APP_COUNT 12
-#define DOCK_PAD 7
-#define DOCK_GAP 6
+#define DOCK_PAD 10
+#define DOCK_GAP 8
 
 typedef struct {
 	const char * name;
@@ -159,32 +159,30 @@ static int app_at(int x, int y) {
 
 static void redraw(void) {
 	draw_fill(ctx, 0);
-	draw_rounded_rectangle(ctx, 1, 1, ctx->width - 2, ctx->height - 2,
-		12, premultiply(rgba(14, 20, 28, 232)));
-	draw_rounded_rectangle(ctx, 1, 1, ctx->width - 2, ctx->height - 2,
-		12, premultiply(rgba(65, 82, 98, 80)));
-	draw_rounded_rectangle(ctx, 2, 2, ctx->width - 4, ctx->height - 4,
-		11, premultiply(rgba(17, 23, 31, 238)));
+	razion_draw_glass_panel(ctx, 1, 1, ctx->width - 2, ctx->height - 3, 18);
 
 	int cell = cell_size();
 	for (int i = 0; i < APP_COUNT; ++i) {
 		int x = config.position == 0 ? DOCK_PAD + i * cell : DOCK_PAD;
 		int y = config.position == 0 ? DOCK_PAD : DOCK_PAD + i * cell;
-		if (i == hovered || i == pressed) {
-			draw_rounded_rectangle(ctx, x - 2, y - 2, config.icon_size + 4,
-				config.icon_size + 4, 8, i == pressed ? RAZION_SELECTION : RAZION_SURFACE_HOVER);
-		}
+		int grow = i == hovered && !config.compact ? 6 : 0;
+		if (i == hovered || i == pressed)
+			draw_rounded_rectangle(ctx, x - 4 - grow / 2, y - 4 - grow / 2,
+				config.icon_size + 8 + grow, config.icon_size + 8 + grow, 13,
+				i == pressed ? RAZION_SELECTION : razion_glass());
 		sprite_t * icon = icon_get_48(apps[i].icon);
-		int grow = i == hovered && !config.compact ? 4 : 0;
+		if (i == hovered && !config.compact && config.position == 0) y -= 3;
+		else if (i == hovered && !config.compact && config.position == 1) x += 3;
+		else if (i == hovered && !config.compact && config.position == 2) x -= 3;
 		draw_sprite_scaled_alpha(ctx, icon, x - grow / 2, y - grow / 2,
 			config.icon_size + grow, config.icon_size + grow, active[i] ? 1.0 : 0.94);
 		if (active[i]) {
 			if (config.position == 0) draw_rounded_rectangle(ctx, x + config.icon_size / 2 - 4,
-				ctx->height - 6, 8, 3, 2, RAZION_ACCENT);
+				ctx->height - 8, 8, 4, 3, RAZION_ACCENT);
 			else if (config.position == 1) draw_rounded_rectangle(ctx, ctx->width - 6,
-				y + config.icon_size / 2 - 4, 3, 8, 2, RAZION_ACCENT);
+				y + config.icon_size / 2 - 4, 4, 8, 3, RAZION_ACCENT);
 			else draw_rounded_rectangle(ctx, 3, y + config.icon_size / 2 - 4,
-				3, 8, 2, RAZION_ACCENT);
+				4, 8, 3, RAZION_ACCENT);
 		}
 	}
 	flip(ctx);

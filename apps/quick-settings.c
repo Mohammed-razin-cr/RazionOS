@@ -29,7 +29,7 @@ static gfx_context_t * ctx;
 static struct TT_Font * font, * bold;
 static int running=1, hover=-1, pressed=-1, focus=12;
 static int network_available, mixer=-1, volume_percent, theme_light, dnd;
-static char accent[16]="teal";
+static char accent[16]="blue";
 
 static int ensure_config(char * directory, size_t size) {
 	const char * home=getenv("HOME");
@@ -86,16 +86,17 @@ static void label(int x,int y,int size,const char * text,uint32_t color,int stro
 static void card(int id,int x,int y,int width,int height,const char * title,const char * detail,int status_ok,int interactive) {
 	uint32_t fill=interactive && id==pressed?RAZION_SELECTION:interactive && id==hover?RAZION_SURFACE_HOVER:RAZION_SURFACE;
 	if (interactive && id==focus && window->focused)
-		draw_rounded_rectangle(ctx,x-2,y-2,width+4,height+4,10,RAZION_FOCUS);
-	draw_rounded_rectangle(ctx,x,y,width,height,8,fill);
+		razion_draw_focus(ctx,x,y,width,height,8);
+	razion_draw_card(ctx,x,y,width,height,fill);
 	draw_rectangle_solid(ctx,x+10,y+height-1,width-20,1,status_ok?RAZION_ACCENT:RAZION_BORDER);
+	razion_draw_status_dot(ctx,x+width-24,y+16,status_ok?RAZION_SUCCESS:RAZION_WARNING);
 	label(x+16,y+25,14,title,interactive?RAZION_TEXT_PRIMARY:RAZION_TEXT_SECONDARY,1);
 	label(x+16,y+47,11,detail,status_ok?RAZION_TEXT_SECONDARY:RAZION_WARNING,0);
 }
 
 static void redraw(void) {
 	struct decor_bounds b; decor_get_bounds(window,&b); draw_fill(ctx,RAZION_BACKGROUND);
-	int x=b.left_width+28,top=b.top_height; label(x,top+42,24,"Quick Settings",RAZION_TEXT_PRIMARY,1);
+	int x=b.left_width+28,top=b.top_height; razion_draw_accent_bar(ctx,x,top+24,92); label(x,top+42,24,"Quick Settings",RAZION_TEXT_PRIMARY,1);
 	label(x,top+64,11,"Controls available on this RazionOS session",RAZION_TEXT_SECONDARY,0);
 	card(10,x,top+88,212,70,"Network",network_available?"Interface available":"No interface available",network_available,0);
 	char volume[64]; snprintf(volume,sizeof(volume),mixer>=0?"Volume %d%%  •  activate to raise":"Mixer unavailable",volume_percent);

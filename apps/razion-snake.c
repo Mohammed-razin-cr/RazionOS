@@ -53,8 +53,8 @@ static void reset_game(void) {
 }
 
 static int tick_interval(void) {
-	int interval = 108 - (score / 40) * 7;
-	return interval < 48 ? 48 : interval;
+	int interval = 94 - (score / 50) * 6;
+	return interval < 42 ? 42 : interval;
 }
 
 static void tick(void) {
@@ -88,34 +88,50 @@ static void draw_overlay(int left, int top) {
 	const char * title = state == GAME_OVER ? "Game over" : state == GAME_PAUSED ? "Paused" : "Ready?";
 	const char * detail = state == GAME_OVER ? "Press R to play again" :
 		state == GAME_PAUSED ? "Space resumes the game" : "Press any direction to launch";
-	draw_rounded_rectangle(ctx, left + 80, top + 119, 280, 82, 10, premultiply(rgba(10,16,24,235)));
+	draw_rounded_rectangle(ctx, left + 80, top + 119, 280, 82, 10, razion_scrim());
+	draw_rectangle_solid(ctx, left + 110, top + 200, 220, 1, RAZION_ACCENT);
 	tt_set_size(bold, 18); int width = tt_string_width(bold, title);
 	tt_draw_string(ctx, bold, left + (GRID_W * CELL - width) / 2, top + 151, title, RAZION_TEXT_PRIMARY);
 	tt_set_size(font, 12); width = tt_string_width(font, detail);
 	tt_draw_string(ctx, font, left + (GRID_W * CELL - width) / 2, top + 177, detail, RAZION_TEXT_SECONDARY);
 }
 
+static void draw_head_details(int x, int y) {
+	int eye_a_x = x + 6, eye_a_y = y + 6, eye_b_x = x + 12, eye_b_y = y + 6;
+	if (direction == 1) { eye_a_x = x + 11; eye_b_x = x + 11; eye_a_y = y + 5; eye_b_y = y + 12; }
+	else if (direction == 2) { eye_a_x = x + 6; eye_b_x = x + 12; eye_a_y = y + 11; eye_b_y = y + 11; }
+	else if (direction == 3) { eye_a_x = x + 5; eye_b_x = x + 5; eye_a_y = y + 5; eye_b_y = y + 12; }
+	draw_rounded_rectangle(ctx, eye_a_x, eye_a_y, 3, 3, 2, RAZION_BACKGROUND);
+	draw_rounded_rectangle(ctx, eye_b_x, eye_b_y, 3, 3, 2, RAZION_BACKGROUND);
+}
+
 static void redraw(void) {
 	struct decor_bounds b; decor_get_bounds(window, &b); draw_fill(ctx, RAZION_BACKGROUND);
 	int left = (window->width - GRID_W * CELL) / 2, top = b.top_height + 78;
+	razion_draw_accent_bar(ctx, b.left_width + 26, b.top_height + 20, 88);
 	tt_set_size(bold, 22); tt_draw_string(ctx, bold, b.left_width + 26, b.top_height + 39, "Razion Snake", RAZION_TEXT_PRIMARY);
 	tt_set_size(font, 11); tt_draw_string(ctx, font, b.left_width + 26, b.top_height + 61, "Arrows / WASD move  -  Space pauses  -  R restarts", RAZION_TEXT_SECONDARY);
 	char label[80]; snprintf(label, sizeof(label), "Score %d   Best %d", score, best_score);
 	tt_set_size(bold, 12); int label_width = tt_string_width(bold, label);
 	tt_draw_string(ctx, bold, window->width - b.right_width - label_width - 26, b.top_height + 39, label, RAZION_ACCENT);
-	draw_rounded_rectangle(ctx, left - 10, top - 10, GRID_W * CELL + 20, GRID_H * CELL + 20, 10, RAZION_SURFACE);
+	char speed[32]; snprintf(speed, sizeof(speed), "Speed %dms", tick_interval());
+	tt_set_size(font, 9); razion_draw_chip(ctx, font, window->width - b.right_width - 126, b.top_height + 51, speed, RAZION_SUCCESS);
+	razion_draw_card(ctx, left - 10, top - 10, GRID_W * CELL + 20, GRID_H * CELL + 20, RAZION_SURFACE);
 	for (int y = 0; y < GRID_H; ++y) for (int x = 0; x < GRID_W; ++x) {
-		uint32_t color = ((x + y) & 1) ? RAZION_SURFACE_SECONDARY : RAZION_SURFACE;
+		uint32_t color = ((x + y) & 1) ? RAZION_SURFACE_SECONDARY : RAZION_SURFACE_HOVER;
 		draw_rectangle_solid(ctx, left + x * CELL, top + y * CELL, CELL - 1, CELL - 1, color);
 	}
-	draw_rounded_rectangle(ctx, left + food_x * CELL + 3, top + food_y * CELL + 3, CELL - 6, CELL - 6, 6, RAZION_ERROR);
+	draw_rounded_rectangle(ctx, left + food_x * CELL + 2, top + food_y * CELL + 2, CELL - 4, CELL - 4, 7, RAZION_ERROR);
+	draw_rounded_rectangle(ctx, left + food_x * CELL + 6, top + food_y * CELL + 6, CELL - 12, CELL - 12, 5, RAZION_WARNING);
 	for (int i = snake_length - 1; i >= 0; --i) {
 		uint32_t color = i ? RAZION_SUCCESS : RAZION_ACCENT;
 		draw_rounded_rectangle(ctx, left + sx[i] * CELL + 2, top + sy[i] * CELL + 2, CELL - 4, CELL - 4, i ? 4 : 6, color);
+		if (!i) draw_head_details(left + sx[i] * CELL + 2, top + sy[i] * CELL + 2);
 	}
 	draw_overlay(left, top);
 	int button_x = (window->width - 176) / 2, button_y = top + GRID_H * CELL + 22;
 	uint32_t fill = pressed_button ? RAZION_SELECTION : hover_button ? RAZION_SURFACE_HOVER : RAZION_SURFACE_SECONDARY;
+	if (window->focused && (hover_button || pressed_button || state != GAME_PLAYING)) razion_draw_focus(ctx, button_x, button_y, 176, 44, 8);
 	draw_rounded_rectangle(ctx, button_x, button_y, 176, 44, 8, fill);
 	tt_set_size(font, 12); const char * action = action_label(); int action_width = tt_string_width(font, action);
 	tt_draw_string(ctx, font, button_x + (176 - action_width) / 2, button_y + 27, action, RAZION_TEXT_PRIMARY);
