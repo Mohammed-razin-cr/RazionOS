@@ -70,6 +70,14 @@ static void label(struct TT_Font * face, int x, int y, int size,
 	tt_draw_string(ctx, face, x, y, text, color);
 }
 
+static void draw_brand_mark(int x, int y) {
+	draw_rounded_rectangle(ctx, x, y, 32, 32, 9, RAZION_ACCENT);
+	draw_rounded_rectangle(ctx, x + 7,  y + 14, 3, 5,  1, rgb(255,255,255));
+	draw_rounded_rectangle(ctx, x + 12, y + 10, 3, 13, 1, rgb(255,255,255));
+	draw_rounded_rectangle(ctx, x + 17, y + 7,  3, 19, 1, rgb(255,255,255));
+	draw_rounded_rectangle(ctx, x + 22, y + 11, 3, 11, 1, rgb(255,255,255));
+}
+
 static void ellipsized(int x, int y, int size, const char * text,
 	int width, uint32_t color, int strong) {
 	struct TT_Font * face = strong ? bold : font;
@@ -210,9 +218,9 @@ static void redraw(void) {
 	int top = b.top_height;
 	int usable = window->width - b.width - 64;
 
-	razion_draw_accent_bar(ctx, left, top + 22, 96);
-	label(bold, left, top + 42, 25, "Razion Assistant", RAZION_TEXT_PRIMARY);
-	label(font, left, top + 66, 11,
+	draw_brand_mark(left, top + 24);
+	label(bold, left + 44, top + 44, 24, "Razion Assistant", RAZION_TEXT_PRIMARY);
+	label(font, left + 44, top + 67, 11,
 		"Private by design. Requests pass only through Razion AI Engine.",
 		RAZION_TEXT_SECONDARY);
 	tt_set_size(font, 10);
