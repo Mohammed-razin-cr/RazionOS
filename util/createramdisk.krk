@@ -52,6 +52,12 @@ def do_file(p, fn, recurse=True):
     else if fn in restricted_files:
         mode = restricted_files[fn]
 
+    # Startup hooks are programs. Preserve reliable boot behavior even when
+    # the source checkout comes from a filesystem that does not retain Unix
+    # executable bits (for example, a Windows worktree).
+    if fn.startswith('etc/startup.d/') and fn.endswith('.sh'):
+        mode = 0o755
+
     if fn.startswith('src/'):
         uid = users.get('local',0)
         if fn.endswith('.so') or fn.endswith('.o') or fn.endswith('.sys'):

@@ -87,6 +87,7 @@ static razion_pulse_status_t local_ai_fallback(
 	razion_ai_response_t response;
 	if (razion_ai_init(&ai, "razion-pulse")) return RAZION_PULSE_STATUS_UNKNOWN;
 	ai.default_flags |= RAZION_AI_FLAG_LOCAL_ONLY;
+	ai.timeout_ms = 30000;
 	if (razion_ai_classify_intent(&ai, request, &response)) {
 		return RAZION_PULSE_STATUS_UNKNOWN;
 	}

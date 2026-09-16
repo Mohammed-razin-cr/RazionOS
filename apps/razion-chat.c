@@ -38,6 +38,7 @@ static int ask(
 		return 1;
 	}
 	printf("\n\nProvider: %s\n", response.provider[0] ? response.provider : "engine");
+	printf("AI-generated answer; verify important facts against project documentation.\n");
 	return 0;
 }
 

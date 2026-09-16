@@ -163,7 +163,7 @@ razion-ai-status providers
 
 The utility reports service and provider state only; it is not a chatbot.
 Provider availability reflects a real adapter health probe, including whether
-Ollama is reachable and has a usable installed model.
+the configured llama.cpp or Ollama runtime is reachable and has a usable model.
 
 ## Non-blocking requests
 

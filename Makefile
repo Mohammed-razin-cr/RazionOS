@@ -51,7 +51,7 @@ APPS_SH_X=$(foreach app,$(APPS_SH),$(BASE)/bin/$(app))
 APPS_KRK=$(patsubst apps/%.krk,%.krk,$(wildcard apps/*.krk))
 APPS_KRK_X=$(foreach app,$(APPS_KRK),$(BASE)/bin/$(app))
 
-PROVIDER_APPS_X=$(BASE)/bin/razion-ai-provider-ollama
+PROVIDER_APPS_X=$(BASE)/bin/razion-ai-provider-llama-cpp $(BASE)/bin/razion-ai-provider-ollama
 
 # These are defined but TESTS_X is not included in the required ramdisk build;
 # if you want to build the tests, use "make tests". Cleaning will remove them.
@@ -267,6 +267,9 @@ $(BASE)/bin/razion-store: base/usr/include/toaru/rzpkg.h
 $(BASE)/bin/razion-browser: base/usr/include/toaru/razion_ai.h
 
 $(BASE)/bin/razion-ai-provider-ollama: providers/ollama/adapter.c base/usr/include/toaru/razion_ai.h base/usr/include/toaru/razion_ai_provider.h | $(BASE)/lib/libtoaru_confreader.so $(BASE)/lib/libtoaru_json.so $(BASE)/lib/libtoaru_hashmap.so $(BASE)/lib/libtoaru_list.so $(BASE)/lib/libtoaru_pex.so $(LC)
+	$(CC) $(CFLAGS) -o $@ $< -ltoaru_confreader -ltoaru_json -ltoaru_hashmap -ltoaru_list -ltoaru_pex
+
+$(BASE)/bin/razion-ai-provider-llama-cpp: providers/llama_cpp/adapter.c base/usr/include/toaru/razion_ai.h base/usr/include/toaru/razion_ai_provider.h | $(BASE)/lib/libtoaru_confreader.so $(BASE)/lib/libtoaru_json.so $(BASE)/lib/libtoaru_hashmap.so $(BASE)/lib/libtoaru_list.so $(BASE)/lib/libtoaru_pex.so $(LC)
 	$(CC) $(CFLAGS) -o $@ $< -ltoaru_confreader -ltoaru_json -ltoaru_hashmap -ltoaru_list -ltoaru_pex
 
 .PHONY: libs

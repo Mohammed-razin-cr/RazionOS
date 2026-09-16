@@ -4,7 +4,7 @@
 
 Phases 1 and 2 establish Razion AI as an operating-system service, add Razion
 Pulse as its safe command interface, and provide an operational isolated
-Ollama adapter. RazionOS does not ship a chatbot, bundle a model, contact a
+llama.cpp and optional Ollama adapters. RazionOS does not bundle a model, contact a
 cloud provider by default, or grant AI unrestricted system access.
 
 Implemented components:
@@ -26,7 +26,7 @@ Implemented components:
 - a common provider interface covering lifecycle, health, latency, chat,
   streaming, summarization, embeddings, vision, speech, cancellation, and
   capabilities
-- an isolated Ollama adapter with bounded HTTP/JSON handling, automatic local
+- an isolated llama.cpp adapter with bounded HTTP/JSON handling, automatic local
   model discovery, real health probes, and explicit unsupported capabilities
 - bounded offline Universal Search, reused by Pulse for the implemented local
   PDF-search action
@@ -94,11 +94,11 @@ lowest-priority-number provider in the preferred class. Local providers are
 evaluated first by default. Cloud providers require both system-level
 `allow_cloud=1` and an application request carrying `ALLOW_CLOUD`.
 
-The initial configuration defines entries for Ollama, Groq, Gemini,
-OpenRouter, Hugging Face, Anthropic, and OpenAI. Ollama is the only enabled
-entry and is the preferred local adapter. It uses a separate service and
-localhost-only configuration by default. Ollama itself and model weights are
-not bundled. Cloud entries are disabled.
+The initial configuration defines entries for llama.cpp, Ollama, Groq, Gemini,
+OpenRouter, Hugging Face, Anthropic, and OpenAI. llama.cpp is the enabled,
+preferred local adapter. In VirtualBox it connects to the host through the NAT
+gateway. The runtime and model weights are not bundled. Ollama and all cloud
+entries are disabled.
 
 The engine checks adapter health through the provider protocol, caches the
 result briefly, and treats connection failures, timeouts, malformed responses,
@@ -132,6 +132,6 @@ brokers; it must never pass generated text directly to a shell.
 4. Insight diagnostics.
 5. Memory activity index.
 6. Natural-language settings.
-7. **Complete baseline:** operational Ollama text adapter; future work adds
+7. **Complete baseline:** operational llama.cpp and Ollama text adapters; future work adds
    optional model management and richer inference capabilities.
 8. Stable third-party SDK and plugin release.
