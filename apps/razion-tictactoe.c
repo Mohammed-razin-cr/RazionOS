@@ -27,6 +27,8 @@ static int pressed = -1;
 static int running = 1;
 static int game_over;
 static char winner;
+static int last_player_cell = -1;
+static int last_computer_cell = -1;
 static int player_score;
 static int computer_score;
 static int draw_score;
@@ -53,6 +55,12 @@ static int board_full(void) {
 	return 1;
 }
 
+static int mark_count(void) {
+	int count = 0;
+	for (int i = 0; i < BOARD_CELLS; ++i) if (board[i]) count++;
+	return count;
+}
+
 static int board_key(void) {
 	int key = 0;
 	int place = 1;
@@ -64,7 +72,7 @@ static int board_key(void) {
 	return key;
 }
 
-static int minimax(int computer_turn) {
+static int minimax(int computer_turn, int alpha, int beta) {
 	char result = find_winner();
 	if (result == 'O') return 1;
 	if (result == 'X') return -1;
@@ -72,19 +80,26 @@ static int minimax(int computer_turn) {
 
 	int key = board_key();
 	if (minimax_cache[computer_turn][key] != 2) return minimax_cache[computer_turn][key];
+	int pruned = 0;
 	int best = computer_turn ? -100 : 100;
 	static const int move_order[BOARD_CELLS] = {4, 0, 2, 6, 8, 1, 3, 5, 7};
 	for (int position = 0; position < BOARD_CELLS; ++position) {
 		int i = move_order[position];
 		if (board[i]) continue;
 		board[i] = computer_turn ? 'O' : 'X';
-		int score = minimax(!computer_turn);
+		int score = minimax(!computer_turn, alpha, beta);
 		board[i] = 0;
-		if (computer_turn && score > best) best = score;
-		if (!computer_turn && score < best) best = score;
+		if (computer_turn) {
+			if (score > best) best = score;
+			if (best > alpha) alpha = best;
+		} else {
+			if (score < best) best = score;
+			if (best < beta) beta = best;
+		}
+		if (beta <= alpha) { pruned = 1; break; }
 	}
-	minimax_cache[computer_turn][key] = best;
-	return minimax_cache[computer_turn][key];
+	if (!pruned) minimax_cache[computer_turn][key] = best;
+	return best;
 }
 
 static void finish_if_needed(void) {
@@ -99,22 +114,44 @@ static void finish_if_needed(void) {
 	}
 }
 
+static int immediate_tactical_move(char mark) {
+	for (int i = 0; i < BOARD_CELLS; ++i) {
+		if (board[i]) continue;
+		board[i] = mark;
+		int wins = find_winner() == mark;
+		board[i] = 0;
+		if (wins) return i;
+	}
+	return -1;
+}
+
 static void computer_move(void) {
 	int best_score = -100;
 	int best_cell = -1;
 	static const int move_order[BOARD_CELLS] = {4, 0, 2, 6, 8, 1, 3, 5, 7};
+	best_cell = immediate_tactical_move('O');
+	if (best_cell < 0) best_cell = immediate_tactical_move('X');
+	if (best_cell < 0 && mark_count() == 1) {
+		best_cell = board[4] ? 0 : 4;
+	}
+	if (best_cell >= 0) {
+		board[best_cell] = 'O';
+		last_computer_cell = best_cell;
+		finish_if_needed();
+		return;
+	}
 	for (int position = 0; position < BOARD_CELLS; ++position) {
 		int i = move_order[position];
 		if (board[i]) continue;
 		board[i] = 'O';
-		int score = minimax(0);
+		int score = minimax(0, -100, 100);
 		board[i] = 0;
 		if (score > best_score) {
 			best_score = score;
 			best_cell = i;
 		}
 	}
-	if (best_cell >= 0) board[best_cell] = 'O';
+	if (best_cell >= 0) { board[best_cell] = 'O'; last_computer_cell = best_cell; }
 	finish_if_needed();
 }
 
@@ -123,6 +160,8 @@ static void reset_game(void) {
 	selected = 4;
 	hover = -1;
 	pressed = -1;
+	last_player_cell = -1;
+	last_computer_cell = -1;
 	game_over = 0;
 	winner = 0;
 }
@@ -130,6 +169,8 @@ static void reset_game(void) {
 static int play_cell(int cell) {
 	if (game_over || cell < 0 || cell >= BOARD_CELLS || board[cell]) return 0;
 	board[cell] = 'X';
+	last_player_cell = cell;
+	last_computer_cell = -1;
 	selected = cell;
 	finish_if_needed();
 	if (!game_over) computer_move();
@@ -181,7 +222,7 @@ static void redraw(void) {
 		"Razion Tic-Tac-Toe", RAZION_TEXT_PRIMARY);
 	tt_set_size(font, 11);
 	tt_draw_string(ctx, font, content_left + 32, b.top_height + 65,
-		"Player X  •  Computer O  •  Arrow keys + Enter", RAZION_TEXT_SECONDARY);
+		"Player X  -  Computer O  -  Arrows, 1-9, Enter", RAZION_TEXT_SECONDARY);
 
 	char score[96];
 	snprintf(score, sizeof(score), "You %d     Draws %d     Computer %d",
@@ -197,6 +238,8 @@ static void redraw(void) {
 		if (winning_cell(cell)) fill = RAZION_SELECTION;
 		else if (!game_over && cell == pressed) fill = RAZION_SELECTION;
 		else if (!game_over && cell == hover && !board[cell]) fill = RAZION_SURFACE_HOVER;
+		else if (cell == last_player_cell) fill = rgb(36, 68, 92);
+		else if (cell == last_computer_cell) fill = rgb(78, 58, 42);
 		draw_rounded_rectangle(ctx, x, y, CELL_SIZE, CELL_SIZE, 10, fill);
 		if (window->focused && cell == selected) {
 			draw_rounded_rectangle(ctx, x + 3, y + 3, CELL_SIZE - 6, CELL_SIZE - 6, 8, RAZION_BORDER);
@@ -205,20 +248,21 @@ static void redraw(void) {
 		draw_mark(cell, x, y, fill);
 	}
 
-	const char * status = "Your turn — choose an empty square";
+	const char * status = "Your turn - choose an empty square";
 	uint32_t status_color = RAZION_TEXT_PRIMARY;
 	if (winner == 'X') { status = "You win! Great line."; status_color = RAZION_SUCCESS; }
-	else if (winner == 'O') { status = "Computer wins — try another round."; status_color = RAZION_WARNING; }
-	else if (game_over) { status = "Draw — evenly matched."; status_color = RAZION_TEXT_PRIMARY; }
+	else if (winner == 'O') { status = "Computer wins - try another round."; status_color = RAZION_WARNING; }
+	else if (game_over) { status = "Draw - evenly matched."; status_color = RAZION_TEXT_PRIMARY; }
+	else if (last_computer_cell >= 0) { status = "Computer replied. Your turn."; status_color = RAZION_TEXT_SECONDARY; }
 	centered_text(bold, 14, board_top + BOARD_SIZE + 40, status, status_color);
 
-	int button_x = content_left + (content_width - 170) / 2;
+	int button_x = content_left + (content_width - 190) / 2;
 	int button_y = board_top + BOARD_SIZE + 63;
 	uint32_t button_fill = pressed == BOARD_CELLS ? RAZION_SELECTION :
 		(hover == BOARD_CELLS ? RAZION_SURFACE_HOVER : RAZION_SURFACE);
-	draw_rounded_rectangle(ctx, button_x, button_y, 170, 42, 8, button_fill);
-	centered_text(font, 12, button_y + 26, "New round  (R)", RAZION_TEXT_PRIMARY);
-	centered_text(font, 10, button_y + 66, "Esc closes the game", RAZION_TEXT_SECONDARY);
+	draw_rounded_rectangle(ctx, button_x, button_y, 190, 46, 8, button_fill);
+	centered_text(font, 12, button_y + 28, "New round  (R)", RAZION_TEXT_PRIMARY);
+	centered_text(font, 10, button_y + 70, "Esc closes the game", RAZION_TEXT_SECONDARY);
 
 	render_decorations(window, ctx, "Razion Tic-Tac-Toe");
 	flip(ctx);
@@ -239,9 +283,9 @@ static int hit_test(int x, int y) {
 		int top = board_top + row * (CELL_SIZE + CELL_GAP);
 		if (x >= left && x < left + CELL_SIZE && y >= top && y < top + CELL_SIZE) return cell;
 	}
-	int button_x = content_left + (content_width - 170) / 2;
+	int button_x = content_left + (content_width - 190) / 2;
 	int button_y = board_top + BOARD_SIZE + 63;
-	if (x >= button_x && x < button_x + 170 && y >= button_y && y < button_y + 42) return BOARD_CELLS;
+	if (x >= button_x && x < button_x + 190 && y >= button_y && y < button_y + 46) return BOARD_CELLS;
 	return -1;
 }
 
@@ -286,6 +330,7 @@ int main(void) {
 				else if (key->event.keycode == KEY_ARROW_RIGHT) { move_selection(1, 0); dirty = 1; }
 				else if (key->event.keycode == KEY_ARROW_UP) { move_selection(0, -1); dirty = 1; }
 				else if (key->event.keycode == KEY_ARROW_DOWN) { move_selection(0, 1); dirty = 1; }
+				else if (key->event.key >= '1' && key->event.key <= '9') dirty = play_cell(key->event.key - '1');
 				else if (key->event.key == '\n' || key->event.key == ' ') dirty = play_cell(selected);
 				if (dirty) redraw();
 				break;

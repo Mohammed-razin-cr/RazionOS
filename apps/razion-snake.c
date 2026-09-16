@@ -26,6 +26,7 @@ static int sx[MAX_SEGMENTS], sy[MAX_SEGMENTS], snake_length;
 static int food_x, food_y, direction, next_direction;
 static int score, best_score, running = 1;
 static int hover_button, pressed_button;
+static int immediate_tick;
 static enum game_state state;
 
 static long long monotonic_ms(void) {
@@ -52,8 +53,8 @@ static void reset_game(void) {
 }
 
 static int tick_interval(void) {
-	int interval = 125 - (score / 50) * 8;
-	return interval < 61 ? 61 : interval;
+	int interval = 108 - (score / 40) * 7;
+	return interval < 48 ? 48 : interval;
 }
 
 static void tick(void) {
@@ -86,7 +87,7 @@ static void draw_overlay(int left, int top) {
 	if (state == GAME_PLAYING) return;
 	const char * title = state == GAME_OVER ? "Game over" : state == GAME_PAUSED ? "Paused" : "Ready?";
 	const char * detail = state == GAME_OVER ? "Press R to play again" :
-		state == GAME_PAUSED ? "Space resumes the game" : "Use arrows or WASD to start";
+		state == GAME_PAUSED ? "Space resumes the game" : "Press any direction to launch";
 	draw_rounded_rectangle(ctx, left + 80, top + 119, 280, 82, 10, premultiply(rgba(10,16,24,235)));
 	tt_set_size(bold, 18); int width = tt_string_width(bold, title);
 	tt_draw_string(ctx, bold, left + (GRID_W * CELL - width) / 2, top + 151, title, RAZION_TEXT_PRIMARY);
@@ -98,7 +99,7 @@ static void redraw(void) {
 	struct decor_bounds b; decor_get_bounds(window, &b); draw_fill(ctx, RAZION_BACKGROUND);
 	int left = (window->width - GRID_W * CELL) / 2, top = b.top_height + 78;
 	tt_set_size(bold, 22); tt_draw_string(ctx, bold, b.left_width + 26, b.top_height + 39, "Razion Snake", RAZION_TEXT_PRIMARY);
-	tt_set_size(font, 11); tt_draw_string(ctx, font, b.left_width + 26, b.top_height + 61, "Arrows / WASD move  •  Space pauses  •  R restarts", RAZION_TEXT_SECONDARY);
+	tt_set_size(font, 11); tt_draw_string(ctx, font, b.left_width + 26, b.top_height + 61, "Arrows / WASD move  -  Space pauses  -  R restarts", RAZION_TEXT_SECONDARY);
 	char label[80]; snprintf(label, sizeof(label), "Score %d   Best %d", score, best_score);
 	tt_set_size(bold, 12); int label_width = tt_string_width(bold, label);
 	tt_draw_string(ctx, bold, window->width - b.right_width - label_width - 26, b.top_height + 39, label, RAZION_ACCENT);
@@ -115,22 +116,22 @@ static void redraw(void) {
 	draw_overlay(left, top);
 	int button_x = (window->width - 176) / 2, button_y = top + GRID_H * CELL + 22;
 	uint32_t fill = pressed_button ? RAZION_SELECTION : hover_button ? RAZION_SURFACE_HOVER : RAZION_SURFACE_SECONDARY;
-	draw_rounded_rectangle(ctx, button_x, button_y, 176, 40, 8, fill);
+	draw_rounded_rectangle(ctx, button_x, button_y, 176, 44, 8, fill);
 	tt_set_size(font, 12); const char * action = action_label(); int action_width = tt_string_width(font, action);
-	tt_draw_string(ctx, font, button_x + (176 - action_width) / 2, button_y + 25, action, RAZION_TEXT_PRIMARY);
+	tt_draw_string(ctx, font, button_x + (176 - action_width) / 2, button_y + 27, action, RAZION_TEXT_PRIMARY);
 	render_decorations(window, ctx, "Razion Snake"); flip(ctx); yutani_flip(yctx, window);
 }
 
 static int button_hit(int x, int y) {
 	struct decor_bounds b; decor_get_bounds(window, &b); int top = b.top_height + 78;
 	int button_x = (window->width - 176) / 2, button_y = top + GRID_H * CELL + 22;
-	return x >= button_x && x < button_x + 176 && y >= button_y && y < button_y + 40;
+	return x >= button_x && x < button_x + 176 && y >= button_y && y < button_y + 44;
 }
 
 static void activate_button(void) {
 	if (state == GAME_OVER) reset_game();
 	else if (state == GAME_PLAYING) state = GAME_PAUSED;
-	else state = GAME_PLAYING;
+	else { if (state == GAME_READY) immediate_tick = 1; state = GAME_PLAYING; }
 }
 
 static int handle_key(struct yutani_msg_key_event * key) {
@@ -145,7 +146,7 @@ static int handle_key(struct yutani_msg_key_event * key) {
 	else if (key->event.keycode == KEY_ARROW_LEFT || key->event.key == 'a' || key->event.key == 'A') requested = 3;
 	if (requested < 0 || state == GAME_OVER || state == GAME_PAUSED) return 0;
 	if ((requested + 2) % 4 != direction) next_direction = requested;
-	if (state == GAME_READY) state = GAME_PLAYING;
+	if (state == GAME_READY) { state = GAME_PLAYING; immediate_tick = 1; }
 	return 1;
 }
 
@@ -161,7 +162,7 @@ int main(void) {
 	while (running) {
 		enum game_state previous_state = state;
 		long long remaining = next_tick - monotonic_ms();
-		int fd = fileno(yctx->sock), timeout = state == GAME_PLAYING ? (remaining > 0 ? (int)remaining : 0) : 1000;
+		int fd = fileno(yctx->sock), timeout = state == GAME_PLAYING ? (immediate_tick ? 0 : (remaining > 0 ? (int)remaining : 0)) : 1000;
 		int event_ready = yutani_query(yctx) > 0 || fswait2(1, &fd, timeout) == 0, dirty = 0;
 		if (event_ready) {
 			yutani_msg_t * message = yutani_poll(yctx);
@@ -185,8 +186,9 @@ int main(void) {
 			}
 		}
 		long long now = monotonic_ms();
-		if (state != GAME_PLAYING || previous_state != GAME_PLAYING) next_tick = now + tick_interval();
-		else if (now >= next_tick) { tick(); dirty = 1; next_tick = now + tick_interval(); }
+		if (state != GAME_PLAYING) { immediate_tick = 0; next_tick = now + tick_interval(); }
+		else if (immediate_tick || now >= next_tick) { immediate_tick = 0; tick(); dirty = 1; next_tick = now + tick_interval(); }
+		else if (previous_state != GAME_PLAYING) next_tick = now + tick_interval();
 		if (dirty && running) redraw();
 	}
 	yutani_close(yctx, window); return 0;

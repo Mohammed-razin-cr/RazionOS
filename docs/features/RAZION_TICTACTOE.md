@@ -7,21 +7,24 @@ network connection, browser runtime, or third-party game framework.
 ## Playing
 
 - Select a square with the pointer, or use the arrow keys.
+- Press number keys 1 through 9 to play directly in a square.
 - Click, press Enter, or press Space to place X.
 - Select **New round** or press **R** to clear the board.
 - Press **Esc** to close the game.
 
 The player is X and always opens the round. The computer is O. Its move is
-selected with a minimax search over the remaining board states, so it plays a
-legal best move rather than choosing a random square. Wins, draws, and computer
-wins are counted for the current application session.
+selected with solved opening rules, immediate win/block checks, and a minimax
+search over the remaining board states, so it plays a legal best move rather
+than choosing a random square. Wins, draws, and computer wins are counted for
+the current application session.
 
 ## Performance
 
-Board evaluations are memoized by compact ternary board state, allowing later
-computer moves and new rounds to reuse earlier results. Preferred move ordering
-also finds strong candidates early. The window redraws only when visible state
-changes, avoiding unnecessary rendering for repeated pointer events.
+The first computer reply uses a constant-time opening rule. Later moves use
+alpha-beta minimax with memoized compact ternary board states, allowing new
+rounds to reuse earlier results. Immediate win and block checks avoid deeper
+search when the correct move is obvious. The window redraws only when visible
+state changes, avoiding unnecessary rendering for repeated pointer events.
 
 ## Integration
 

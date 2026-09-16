@@ -18,6 +18,9 @@ All notable RazionOS milestone changes are recorded here.
   best score, WASD, pointer actions, and 2048/no-moves feedback
 - Razion Tic-Tac-Toe, a native pointer- and keyboard-accessible strategy game
   with session scoring, cached minimax strategy, and state-change-only redraws
+- Faster game UX pass: Snake launches movement on the first direction key,
+  Tiles explains blocked actions through status feedback, and Tic-Tac-Toe uses
+  solved opening moves, immediate win/block checks, and alpha-beta pruning
 - Modern File Manager operations: create, rename, copy, cut, paste, safe and
   permanent deletion, properties, current-folder search, sorting, multiple
   selection, context menus, keyboard shortcuts, and same-window folder drag

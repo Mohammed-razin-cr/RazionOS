@@ -23,6 +23,9 @@ static int board[SIZE][SIZE], undo_board[SIZE][SIZE];
 static int score, best_score, undo_score;
 static int running = 1, finished, undo_available, reached_goal;
 static int hover = -1, pressed = -1;
+static char status[96] = "Merge matching tiles to reach 2048.";
+
+static int can_move(void);
 
 static void add_tile(void) {
 	int empty[SIZE * SIZE][2], count = 0;
@@ -34,10 +37,15 @@ static void add_tile(void) {
 	board[empty[pick][1]][empty[pick][0]] = rand() % 10 ? 2 : 4;
 }
 
+static void set_status(const char * message) {
+	snprintf(status, sizeof(status), "%s", message);
+}
+
 static void reset_game(void) {
 	memset(board, 0, sizeof(board));
 	score = 0; finished = 0; reached_goal = 0; undo_available = 0;
 	add_tile(); add_tile();
+	set_status("New board ready. Use arrows or WASD.");
 }
 
 static int compact_line(int line[SIZE]) {
@@ -76,11 +84,16 @@ static int move_board(int direction) {
 			else board[SIZE-1-i][a] = line[i];
 		}
 	}
-	if (!changed) { reached_goal = previous_goal; return 0; }
+	if (!changed) {
+		reached_goal = previous_goal;
+		set_status(can_move() ? "That direction is blocked." : "No moves left. Undo or start over.");
+		return 0;
+	}
 	memcpy(undo_board, before, sizeof(undo_board));
 	undo_score = before_score; undo_available = 1;
 	add_tile();
 	if (score > best_score) best_score = score;
+	set_status(reached_goal ? "2048 reached. You can keep playing." : "Nice move.");
 	return 1;
 }
 
@@ -96,6 +109,7 @@ static int undo_move(void) {
 	if (!undo_available) return 0;
 	memcpy(board, undo_board, sizeof(board));
 	score = undo_score; undo_available = 0; finished = 0; reached_goal = 0;
+	set_status("Undo restored the previous board.");
 	return 1;
 }
 
@@ -113,9 +127,9 @@ static uint32_t tile_color(int value) {
 static void draw_button(int id, int x, int y, const char * label, int enabled) {
 	uint32_t fill = !enabled ? RAZION_SURFACE : id == pressed ? RAZION_SELECTION :
 		id == hover ? RAZION_SURFACE_HOVER : RAZION_SURFACE_SECONDARY;
-	draw_rounded_rectangle(ctx, x, y, 142, 40, 8, fill);
+	draw_rounded_rectangle(ctx, x, y, 142, 44, 8, fill);
 	tt_set_size(font, 12); int width = tt_string_width(font, label);
-	tt_draw_string(ctx, font, x + (142 - width) / 2, y + 25, label,
+	tt_draw_string(ctx, font, x + (142 - width) / 2, y + 27, label,
 		enabled ? RAZION_TEXT_PRIMARY : RAZION_TEXT_SECONDARY);
 }
 
@@ -127,6 +141,7 @@ static void redraw(void) {
 	char label[80]; snprintf(label, sizeof(label), "Score %d   Best %d", score, best_score);
 	tt_set_size(bold, 12); int label_width = tt_string_width(bold, label);
 	tt_draw_string(ctx, bold, window->width - b.right_width - label_width - 30, b.top_height + 39, label, RAZION_ACCENT);
+	tt_set_size(font, 10); tt_draw_string(ctx, font, b.left_width + 30, b.top_height + 78, status, RAZION_TEXT_SECONDARY);
 	draw_rounded_rectangle(ctx, left - 10, top - 10, 440, 440, 10, RAZION_SURFACE);
 	for (int y = 0; y < SIZE; ++y) for (int x = 0; x < SIZE; ++x) {
 		int px = left + x * STEP, py = top + y * STEP, value = board[y][x];
@@ -156,14 +171,17 @@ static void redraw(void) {
 static int hit_test(int x, int y) {
 	struct decor_bounds b; decor_get_bounds(window, &b);
 	int left = (window->width - 420) / 2, buttons_y = b.top_height + 86 + 432;
-	if (x >= left + 57 && x < left + 199 && y >= buttons_y && y < buttons_y + 40) return 0;
-	if (x >= left + 221 && x < left + 363 && y >= buttons_y && y < buttons_y + 40) return 1;
+	if (x >= left + 57 && x < left + 199 && y >= buttons_y && y < buttons_y + 44) return 0;
+	if (x >= left + 221 && x < left + 363 && y >= buttons_y && y < buttons_y + 44) return 1;
 	return -1;
 }
 
 static int activate(int id) {
 	if (id == 0) { reset_game(); return 1; }
-	if (id == 1) return undo_move();
+	if (id == 1) {
+		if (!undo_available) { set_status("Nothing to undo yet."); return 1; }
+		return undo_move();
+	}
 	return 0;
 }
 
@@ -190,7 +208,7 @@ int main(void) {
 					else if (key->event.keycode == KEY_ARROW_RIGHT || key->event.key == 'd' || key->event.key == 'D') direction = 1;
 					else if (key->event.keycode == KEY_ARROW_UP || key->event.key == 'w' || key->event.key == 'W') direction = 2;
 					else if (key->event.keycode == KEY_ARROW_DOWN || key->event.key == 's' || key->event.key == 'S') direction = 3;
-					if (direction >= 0) { dirty = move_board(direction); if (!can_move()) { finished = 1; dirty = 1; } }
+					if (direction >= 0) { dirty = 1; move_board(direction); if (!can_move()) finished = 1; }
 				}
 				break;
 			}
